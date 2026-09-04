@@ -1,15 +1,17 @@
 import type { ExecutionContext } from "@cloudflare/workers-types";
 import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
+import { circleback } from "./sources/circleback";
 
 export interface Env {
   POKE_API_KEY: string;
   AGENTMAIL_WEBHOOK_SECRET: string;
+  CIRCLEBACK_WEBHOOK_SECRET: string;
   POKE_API_URL?: string;
 }
 
 export interface SourceHandler {
-  authorize?(rawBody: string, request: Request, env: Env): Response | null;
+  authorize?(rawBody: string, request: Request, env: Env): Promise<Response | null> | Response | null;
   handle(
     payload: Record<string, unknown>,
     env: Env,
@@ -19,6 +21,7 @@ export interface SourceHandler {
 
 const ROUTES: Record<string, SourceHandler> = {
   "/agentmail": agentmail,
+  "/circleback": circleback,
 };
 
 export default {
@@ -36,7 +39,7 @@ export default {
     const rawBody = await request.text();
 
     if (handler.authorize) {
-      const authError = handler.authorize(rawBody, request, env);
+      const authError = await handler.authorize(rawBody, request, env);
       if (authError) return authError;
     }
 

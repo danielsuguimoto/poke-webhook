@@ -1,2 +1,3 @@
 POKE_API_KEY=your-poke-api-key
 AGENTMAIL_WEBHOOK_SECRET=whsec_your-agentmail-signing-secret
+CIRCLEBACK_WEBHOOK_SECRET=your-circleback-signing-secret
