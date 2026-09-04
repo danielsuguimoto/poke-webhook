@@ -7,7 +7,6 @@
     "enabled": true
   },
   "vars": {
-    "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message",
-    "WEBHOOK_SECRET_HEADER": "X-Webhook-Secret"
+    "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message"
   }
 }

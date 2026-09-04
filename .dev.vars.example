@@ -1,2 +1,2 @@
 POKE_API_KEY=your-poke-api-key
-WEBHOOK_SECRET=your-shared-webhook-secret
+AGENTMAIL_WEBHOOK_SECRET=whsec_your-agentmail-signing-secret

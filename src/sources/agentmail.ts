@@ -1,6 +1,7 @@
+import { Webhook, WebhookVerificationError } from "standardwebhooks";
 import type { SourceHandler } from "../index";
 import { forwardToPoke, accepted, ignored } from "../poke";
-import { stripHtml } from "../utils";
+import { json, stripHtml } from "../utils";
 
 const SUPPORTED_EVENTS = new Set([
   "message.received",
@@ -9,6 +10,34 @@ const SUPPORTED_EVENTS = new Set([
 ]);
 
 export const agentmail: SourceHandler = {
+  authorize(rawBody, request, env): Response | null {
+    const secret = env.AGENTMAIL_WEBHOOK_SECRET;
+    if (!secret) return json(500, { error: "missing_webhook_secret" });
+
+    const headers = {
+      "webhook-id": request.headers.get("svix-id") ?? "",
+      "webhook-timestamp": request.headers.get("svix-timestamp") ?? "",
+      "webhook-signature": request.headers.get("svix-signature") ?? "",
+    };
+    if (
+      !headers["webhook-id"] ||
+      !headers["webhook-timestamp"] ||
+      !headers["webhook-signature"]
+    ) {
+      return json(401, { error: "missing_signature_headers" });
+    }
+
+    try {
+      new Webhook(secret).verify(rawBody, headers);
+      return null;
+    } catch (err) {
+      if (err instanceof WebhookVerificationError) {
+        return json(401, { error: "invalid_signature" });
+      }
+      throw err;
+    }
+  },
+
   async handle(payload, env, ctx): Promise<Response> {
     const eventType = typeof payload.event_type === "string" ? payload.event_type : "";
     const eventId = typeof payload.event_id === "string" ? payload.event_id : "";

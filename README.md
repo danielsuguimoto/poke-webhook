@@ -13,7 +13,7 @@ Other event types are acknowledged with `202` and not forwarded.
 ## How it works
 
 1. A tool POSTs an event to its source-specific path on the Worker URL.
-2. The Worker validates a shared-secret delivery header.
+2. The source handler verifies the request signature (AgentMail signs webhooks via Svix; see [verification docs](https://docs.agentmail.to/webhook-verification)).
 3. The source handler translates the payload into a plain-text `message` string.
 4. The message is forwarded to `POST $POKE_API_URL` with `Authorization: Bearer $POKE_API_KEY`.
 5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`.
@@ -25,7 +25,6 @@ Other event types are acknowledged with `202` and not forwarded.
 | Var | Default | Description |
 |-----|---------|-------------|
 | `POKE_API_URL` | `https://poke.com/api/v1/inbound/api-message` | Poke inbound endpoint |
-| `WEBHOOK_SECRET_HEADER` | `X-Webhook-Secret` | Header name sources send the shared secret on |
 
 ### Secrets
 
@@ -34,29 +33,35 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | Secret | Description |
 |--------|-------------|
 | `POKE_API_KEY` | V2 Poke API key from [Kitchen](https://poke.com/kitchen) |
-| `WEBHOOK_SECRET` | Shared secret configured as a custom delivery header on each source webhook |
+| `AGENTMAIL_WEBHOOK_SECRET` | AgentMail webhook signing secret (`whsec_...`), from `agentmail webhooks get` or the AgentMail console |
 
 ```
 wrangler secret put POKE_API_KEY
-wrangler secret put WEBHOOK_SECRET
+wrangler secret put AGENTMAIL_WEBHOOK_SECRET
 ```
 
 ## Register a webhook
 
-Example for AgentMail (point at the source-specific path):
+Example for AgentMail (point at the source-specific path). AgentMail signs requests automatically — no custom header needed:
 
 ```
 agentmail webhooks create \
   --url https://<your-worker>.workers.dev/agentmail \
   --event-type message.received \
   --event-type message.sent \
-  --event-type message.delivered \
-  --header "X-Webhook-Secret: $WEBHOOK_SECRET"
+  --event-type message.delivered
+```
+
+Retrieve the signing secret (`whsec_...`) and set it as `AGENTMAIL_WEBHOOK_SECRET`:
+
+```
+agentmail webhooks get --webhook-id <ep_xxx>
+wrangler secret put AGENTMAIL_WEBHOOK_SECRET
 ```
 
 ## Add a new source
 
-1. Create `src/sources/<name>.ts` exporting a `SourceHandler` (`handle(payload, env, ctx)` → `Response`).
+1. Create `src/sources/<name>.ts` exporting a `SourceHandler` (`handle(payload, env, ctx)` → `Response`, optional `authorize(rawBody, request, env)` → `Response | null`).
 2. Register it in `src/index.ts` under a new path in `ROUTES`.
 
 ## Develop
@@ -75,7 +80,7 @@ npm run deploy     # publish to Cloudflare
 | `200` | Event accepted and queued for Poke |
 | `202` | Event received but ignored (unsupported type or empty translation) |
 | `400` | Invalid JSON body |
-| `401` | Missing/invalid shared-secret header |
+| `401` | Missing/invalid Svix signature headers |
 | `404` | Unknown source path |
 | `405` | Non-POST method |
-| `500` | `WEBHOOK_SECRET` not configured |
+| `500` | `AGENTMAIL_WEBHOOK_SECRET` not configured |
