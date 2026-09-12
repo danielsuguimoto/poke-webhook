@@ -8,6 +8,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 |--------------|-----------|--------|
 | `POST /agentmail` | [AgentMail](https://docs.agentmail.to/webhooks-overview) | `message.received`, `message.sent`, `message.delivered` |
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
+| `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
 
 Other event types are acknowledged with `202` and not forwarded.
 
@@ -36,11 +37,13 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `POKE_API_KEY` | V2 Poke API key from [Kitchen](https://poke.com/kitchen) |
 | `AGENTMAIL_WEBHOOK_SECRET` | AgentMail webhook signing secret (`whsec_...`), from `agentmail webhooks get` or the AgentMail console |
 | `CIRCLEBACK_WEBHOOK_SECRET` | Circleback webhook signing secret, provided when configuring a webhook automation |
+| `PLUGGY_WEBHOOK_SECRET` | Shared secret you choose; Pluggy sends it as the `x-webhook-secret` header |
 
 ```
 wrangler secret put POKE_API_KEY
 wrangler secret put AGENTMAIL_WEBHOOK_SECRET
 wrangler secret put CIRCLEBACK_WEBHOOK_SECRET
+wrangler secret put PLUGGY_WEBHOOK_SECRET
 ```
 
 ## Register a webhook
@@ -61,6 +64,17 @@ Retrieve the signing secret (`whsec_...`) and set it as `AGENTMAIL_WEBHOOK_SECRE
 agentmail webhooks get --webhook-id <ep_xxx>
 wrangler secret put AGENTMAIL_WEBHOOK_SECRET
 ```
+
+Example for Pluggy. Pluggy does not sign requests — authentication is a shared-secret header, and custom headers can only be set via the API (not the dashboard). Create the webhook in the Pluggy dashboard pointing at `https://<your-worker>.workers.dev/pluggy`, then set the header via `PATCH /webhooks/{id}`:
+
+```
+curl -X PATCH https://api.pluggy.ai/webhooks/<webhook_id> \
+  -H "X-API-KEY: <your_api_key>" \
+  -H "Content-Type: application/json" \
+  -d '{"headers": {"x-webhook-secret": "<your_secret>"}}'
+```
+
+Set the same value as `PLUGGY_WEBHOOK_SECRET`. For extra security you can also whitelist Pluggy's egress IP `52.67.145.81` at the network layer.
 
 ## Add a new source
 

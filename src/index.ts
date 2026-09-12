@@ -2,11 +2,13 @@ import type { ExecutionContext } from "@cloudflare/workers-types";
 import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
 import { circleback } from "./sources/circleback";
+import { pluggy } from "./sources/pluggy";
 
 export interface Env {
   POKE_API_KEY: string;
   AGENTMAIL_WEBHOOK_SECRET: string;
   CIRCLEBACK_WEBHOOK_SECRET: string;
+  PLUGGY_WEBHOOK_SECRET: string;
   POKE_API_URL?: string;
 }
 
@@ -22,6 +24,7 @@ export interface SourceHandler {
 const ROUTES: Record<string, SourceHandler> = {
   "/agentmail": agentmail,
   "/circleback": circleback,
+  "/pluggy": pluggy,
 };
 
 export default {
