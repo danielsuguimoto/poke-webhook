@@ -32,7 +32,7 @@ export const todoist: SourceHandler = {
 
     if (!env.TODOIST_API_TOKEN) return json(500, { error: "missing_api_token" });
     const task = await fetchTask(taskId, env);
-    if (!task || !hasAiLabel(task.labels)) return todoistIgnored(eventName, reminderId);
+    if (!task) return todoistIgnored(eventName, reminderId);
 
     ctx.waitUntil(forwardToPoke(translate(reminder, task), env));
     return accepted(eventName, reminderId);
@@ -103,8 +103,11 @@ function translate(reminder: TodoistReminder, task: TodoistTask): string {
   const labels = Array.isArray(task.labels) ? task.labels.join(", ") : "";
   const firedAt = reminder.due?.string ?? reminder.due?.date;
   const due = task.due?.string ?? task.due?.date;
+  const header = hasAiLabel(task.labels)
+    ? `[Todoist] Reminder fired for a task tagged with the "${AI_LABEL}" label — execute this task:`
+    : "[Todoist] Reminder fired — warn the user about this task:";
   return [
-    `[Todoist] Reminder fired for a task tagged with the "${AI_LABEL}" label — execute this task:`,
+    header,
     `Task: ${task.content ?? "(untitled)"}`,
     ...(task.description ? [`Description: ${task.description}`] : []),
     ...(due ? [`Due: ${due}`] : []),
