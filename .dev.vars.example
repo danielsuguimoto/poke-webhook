@@ -1,6 +1,7 @@
 POKE_API_KEY=your-poke-api-key
 AGENTMAIL_WEBHOOK_SECRET=whsec_your-agentmail-signing-secret
 CIRCLEBACK_WEBHOOK_SECRET=your-circleback-signing-secret
+GOAL_API_WEBHOOK_SECRET=your-goal-api-signing-secret
 PLUGGY_WEBHOOK_SECRET=your-pluggy-shared-secret
 TODOIST_WEBHOOK_SECRET=your-todoist-client-secret
 TODOIST_API_TOKEN=your-todoist-api-token

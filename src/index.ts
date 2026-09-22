@@ -2,6 +2,7 @@ import type { ExecutionContext } from "@cloudflare/workers-types";
 import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
 import { circleback } from "./sources/circleback";
+import { goalApi } from "./sources/goal-api";
 import { pluggy } from "./sources/pluggy";
 import { todoist } from "./sources/todoist";
 
@@ -9,6 +10,7 @@ export interface Env {
   POKE_API_KEY: string;
   AGENTMAIL_WEBHOOK_SECRET: string;
   CIRCLEBACK_WEBHOOK_SECRET: string;
+  GOAL_API_WEBHOOK_SECRET: string;
   PLUGGY_WEBHOOK_SECRET: string;
   TODOIST_WEBHOOK_SECRET: string;
   TODOIST_API_TOKEN: string;
@@ -27,6 +29,7 @@ export interface SourceHandler {
 const ROUTES: Record<string, SourceHandler> = {
   "/agentmail": agentmail,
   "/circleback": circleback,
+  "/goal-api": goalApi,
   "/pluggy": pluggy,
   "/todoist": todoist,
 };
