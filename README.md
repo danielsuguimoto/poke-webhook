@@ -22,6 +22,8 @@ Other event types are acknowledged with `202` and not forwarded (Todoist gets `2
 4. The message is forwarded to `POST $POKE_API_URL` with `Authorization: Bearer $POKE_API_KEY`.
 5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`.
 
+Generated message headers, labels, instructions, and fallback text are in Portuguese. Source content (such as email bodies, meeting notes, task descriptions, event identifiers, and the GOAL API JSON payload) stays in its original language.
+
 ## Configuration
 
 ### Non-secret vars (`wrangler.jsonc`)
@@ -99,6 +101,7 @@ Example for Todoist. In the App Management Console, set the webhook callback URL
 npm install
 npm run dev        # local dev via wrangler
 npm run typecheck
+npm test          # message translation and source-data preservation
 npm run deploy     # publish to Cloudflare
 ```
 

@@ -104,16 +104,16 @@ function translate(reminder: TodoistReminder, task: TodoistTask): string {
   const firedAt = reminder.due?.string ?? reminder.due?.date;
   const due = task.due?.string ?? task.due?.date;
   const header = hasAiLabel(task.labels)
-    ? `[Todoist] Reminder fired for a task tagged with the "${AI_LABEL}" label — execute this task:`
-    : "[Todoist] Reminder fired — warn the user about this task:";
+    ? `[Todoist] Lembrete disparado para uma tarefa com a etiqueta "${AI_LABEL}" — execute esta tarefa:`
+    : "[Todoist] Lembrete disparado — avise o usuário sobre esta tarefa:";
   return [
     header,
-    `Task: ${task.content ?? "(untitled)"}`,
-    ...(task.description ? [`Description: ${task.description}`] : []),
-    ...(due ? [`Due: ${due}`] : []),
-    `Priority: ${task.priority ?? "unknown"}`,
-    ...(labels ? [`Labels: ${labels}`] : []),
+    `Tarefa: ${task.content ?? "(sem título)"}`,
+    ...(task.description ? [`Descrição: ${task.description}`] : []),
+    ...(due ? [`Prazo: ${due}`] : []),
+    `Prioridade: ${task.priority ?? "não informada"}`,
+    ...(labels ? [`Etiquetas: ${labels}`] : []),
     ...(task.url ? [`Link: ${task.url}`] : []),
-    ...(firedAt ? [`Reminder: ${firedAt}`] : []),
+    ...(firedAt ? [`Lembrete: ${firedAt}`] : []),
   ].join("\n");
 }

@@ -36,56 +36,56 @@ function constantTimeEqual(a: string, b: string): boolean {
 }
 
 const EVENT_LABELS: Record<string, string> = {
-  "item/created": "Item was created and connected successfully",
-  "item/updated": "Item was updated and synced successfully",
-  "item/deleted": "Item was deleted",
-  "item/error": "Item encountered an error",
-  "item/waiting_user_input": "Item is blocked waiting for user input",
-  "item/login_succeeded": "Item logged in and is collecting data",
-  "connector/status_updated": "Connector changed status",
-  "transactions/deleted": "Transactions were deleted after item merge",
-  "transactions/created": "New transactions are available",
-  "transactions/updated": "Transactions were updated after item merge",
-  "payment_intent/created": "Payment intent was created",
-  "payment_intent/completed": "Payment intent completed successfully",
+  "item/created": "Item criado e conectado com sucesso",
+  "item/updated": "Item atualizado e sincronizado com sucesso",
+  "item/deleted": "Item excluído",
+  "item/error": "Ocorreu um erro no item",
+  "item/waiting_user_input": "Item bloqueado aguardando informações do usuário",
+  "item/login_succeeded": "Login do item realizado; coletando dados",
+  "connector/status_updated": "Status do conector alterado",
+  "transactions/deleted": "Transações excluídas após a mesclagem de itens",
+  "transactions/created": "Novas transações disponíveis",
+  "transactions/updated": "Transações atualizadas após a mesclagem de itens",
+  "payment_intent/created": "Intenção de pagamento criada",
+  "payment_intent/completed": "Intenção de pagamento concluída com sucesso",
   "payment_intent/waiting_payer_authorization":
-    "Payment intent needs additional payer authorization",
-  "payment_intent/error": "Payment intent finished with an error",
-  "payment_request/updated": "Payment request status changed",
-  "scheduled_payment/created": "Scheduled payment authorization was created",
-  "scheduled_payment/completed": "A scheduled payment was made",
-  "scheduled_payment/error": "Scheduled payment finished with an error",
-  "scheduled_payment/canceled": "Scheduled payment was canceled",
-  "automatic_pix_payment/created": "Automatic PIX payment was scheduled",
-  "automatic_pix_payment/completed": "Automatic PIX payment completed",
-  "automatic_pix_payment/error": "Automatic PIX payment ended with an error",
-  "automatic_pix_payment/canceled": "Automatic PIX payment was canceled",
+    "Intenção de pagamento requer autorização adicional do pagador",
+  "payment_intent/error": "Intenção de pagamento encerrada com erro",
+  "payment_request/updated": "Status da solicitação de pagamento alterado",
+  "scheduled_payment/created": "Autorização de pagamento agendado criada",
+  "scheduled_payment/completed": "Pagamento agendado realizado",
+  "scheduled_payment/error": "Pagamento agendado encerrado com erro",
+  "scheduled_payment/canceled": "Pagamento agendado cancelado",
+  "automatic_pix_payment/created": "Pagamento via Pix Automático agendado",
+  "automatic_pix_payment/completed": "Pagamento via Pix Automático concluído",
+  "automatic_pix_payment/error": "Pagamento via Pix Automático encerrado com erro",
+  "automatic_pix_payment/canceled": "Pagamento via Pix Automático cancelado",
   "smart_transfer_preauthorization/completed":
-    "Smart transfer preauthorization was approved",
+    "Pré-autorização de transferência inteligente aprovada",
   "smart_transfer_preauthorization/error":
-    "Smart transfer preauthorization failed",
-  "smart_transfer_payment/completed": "Smart transfer payment completed",
-  "smart_transfer_payment/error": "Smart transfer payment failed to settle",
+    "Falha na pré-autorização de transferência inteligente",
+  "smart_transfer_payment/completed": "Pagamento de transferência inteligente concluído",
+  "smart_transfer_payment/error": "Falha na liquidação do pagamento de transferência inteligente",
 };
 
 const ID_FIELDS = [
-  "itemId",
-  "connectorId",
-  "paymentRequestId",
-  "paymentIntentId",
-  "schedulePaymentId",
-  "automaticPixPaymentId",
-  "smartTransferPreauthorizationId",
-  "smartTransferPaymentId",
-  "transactionIds",
-];
+  ["itemId", "ID do item"],
+  ["connectorId", "ID do conector"],
+  ["paymentRequestId", "ID da solicitação de pagamento"],
+  ["paymentIntentId", "ID da intenção de pagamento"],
+  ["schedulePaymentId", "ID do pagamento agendado"],
+  ["automaticPixPaymentId", "ID do pagamento via Pix Automático"],
+  ["smartTransferPreauthorizationId", "ID da pré-autorização de transferência inteligente"],
+  ["smartTransferPaymentId", "ID do pagamento de transferência inteligente"],
+  ["transactionIds", "IDs das transações"],
+] as const;
 
 const DETAIL_FIELDS = [
-  "clientUserId",
-  "triggeredBy",
-  "status",
-  "createdTransactionsLink",
-];
+  ["clientUserId", "ID do usuário do cliente"],
+  ["triggeredBy", "Disparado por"],
+  ["status", "Status"],
+  ["createdTransactionsLink", "Link das transações criadas"],
+] as const;
 
 function translate(payload: Record<string, unknown>): string | null {
   const event = payload.event as string;
@@ -94,31 +94,31 @@ function translate(payload: Record<string, unknown>): string | null {
 
   const lines: string[] = [`[Pluggy] ${label} (${event}).`];
 
-  for (const field of ID_FIELDS) {
+  for (const [field, fieldLabel] of ID_FIELDS) {
     const value = payload[field];
     if (value === undefined || value === null) continue;
     const rendered = Array.isArray(value)
-      ? `${value.length} ids${value.length <= 20 ? `: ${value.join(", ")}` : ""}`
+      ? `${value.length} IDs${value.length <= 20 ? `: ${value.join(", ")}` : ""}`
       : String(value);
-    lines.push(`${field}: ${rendered}`);
+    lines.push(`${fieldLabel}: ${rendered}`);
   }
 
-  for (const field of DETAIL_FIELDS) {
+  for (const [field, fieldLabel] of DETAIL_FIELDS) {
     const value = payload[field];
     if (value === undefined || value === null) continue;
-    lines.push(`${field}: ${String(value)}`);
+    lines.push(`${fieldLabel}: ${String(value)}`);
   }
 
   const error = payload.error;
   if (error && typeof error === "object") {
     const e = error as { code?: unknown; description?: unknown; detail?: unknown };
     lines.push(
-      `Error: ${[e.code, e.description, e.detail]
+      `Erro: ${[e.code, e.description, e.detail]
         .filter((v) => typeof v === "string" && v)
         .join(" — ")}`,
     );
   } else if (typeof payload.error === "string") {
-    lines.push(`Error: ${payload.error}`);
+    lines.push(`Erro: ${payload.error}`);
   }
 
   return lines.join("\n");

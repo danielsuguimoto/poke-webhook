@@ -83,17 +83,17 @@ function translateReceived(payload: Record<string, unknown>): string | null {
 
   const toList = msg.to ?? [];
   const to = toList.join(", ");
-  const inboxEmail = toList[0] ?? msg.inbox_id ?? "unknown";
+  const inboxEmail = toList[0] ?? msg.inbox_id ?? "não informada";
   const cc = msg.cc && msg.cc.length ? `\nCc: ${msg.cc.join(", ")}` : "";
-  const body = msg.text || msg.preview || stripHtml(msg.html) || "(no body)";
+  const body = msg.text || msg.preview || stripHtml(msg.html) || "(sem conteúdo)";
   const lines = [
-    `[AgentMail] New email received by your agentmail inbox ${inboxEmail}:`,
-    `From: ${msg.from ?? "unknown"}`,
-    `To: ${to || "unknown"}`,
+    `[AgentMail] Novo e-mail recebido na sua caixa de entrada do AgentMail ${inboxEmail}:`,
+    `De: ${msg.from ?? "não informado"}`,
+    `Para: ${to || "não informado"}`,
     ...(cc ? [cc.trimStart()] : []),
-    `Subject: ${msg.subject ?? "(no subject)"}`,
-    `Time: ${msg.timestamp ?? "unknown"}`,
-    `Thread: ${msg.thread_id ?? "?"}`,
+    `Assunto: ${msg.subject ?? "(sem assunto)"}`,
+    `Data e hora: ${msg.timestamp ?? "não informadas"}`,
+    `Conversa: ${msg.thread_id ?? "?"}`,
     "",
     body,
   ];
@@ -113,10 +113,10 @@ function translateSent(payload: Record<string, unknown>): string | null {
   if (!send || typeof send !== "object") return null;
   const recipients = (send.recipients ?? []).join(", ");
   return [
-    `[AgentMail] Your agentmail inbox ${send.inbox_id ?? "unknown"} sent an outgoing email:`,
-    `Recipients: ${recipients || "unknown"}`,
-    `Thread: ${send.thread_id ?? "?"}`,
-    `Time: ${send.timestamp ?? "unknown"}`,
+    `[AgentMail] Sua caixa de entrada do AgentMail ${send.inbox_id ?? "não informada"} enviou um e-mail:`,
+    `Destinatários: ${recipients || "não informados"}`,
+    `Conversa: ${send.thread_id ?? "?"}`,
+    `Data e hora: ${send.timestamp ?? "não informadas"}`,
   ].join("\n");
 }
 
@@ -125,9 +125,9 @@ function translateDelivered(payload: Record<string, unknown>): string | null {
   if (!delivery || typeof delivery !== "object") return null;
   const recipients = (delivery.recipients ?? []).join(", ");
   return [
-    `[AgentMail] Email sent from your agentmail inbox ${delivery.inbox_id ?? "unknown"} was delivered to the recipient's mail server:`,
-    `Recipients: ${recipients || "unknown"}`,
-    `Thread: ${delivery.thread_id ?? "?"}`,
-    `Time: ${delivery.timestamp ?? "unknown"}`,
+    `[AgentMail] O e-mail enviado pela sua caixa de entrada do AgentMail ${delivery.inbox_id ?? "não informada"} foi entregue ao servidor de e-mail do destinatário:`,
+    `Destinatários: ${recipients || "não informados"}`,
+    `Conversa: ${delivery.thread_id ?? "?"}`,
+    `Data e hora: ${delivery.timestamp ?? "não informadas"}`,
   ].join("\n");
 }

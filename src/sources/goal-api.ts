@@ -38,7 +38,7 @@ export const goalApi: SourceHandler = {
     if (!event) return ignored("unknown", eventId);
 
     ctx.waitUntil(
-      forwardToPoke(`[Goal API] ${event}\n\n${JSON.stringify(payload, null, 2)}`, env),
+      forwardToPoke(`[Goal API] Evento: ${event}\n\n${JSON.stringify(payload, null, 2)}`, env),
     );
     return accepted(event, eventId);
   },
