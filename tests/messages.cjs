@@ -155,7 +155,7 @@ for (const ai of [true, false]) {
       labels: ai ? ["AI", "work"] : ["work"], priority: 4, url: "https://todoist.com/showTask?id=task-1", due: { string: "tomorrow" },
     });
     assert.equal(message, [
-      ai ? '[Todoist] Lembrete disparado para uma tarefa com a etiqueta "ai" — execute esta tarefa:'
+      ai ? '[Todoist] Lembrete disparado para uma tarefa com a etiqueta "ai" — execute esta tarefa e, após a execução, marque-a como concluída no Todoist:'
         : "[Todoist] Lembrete disparado — avise o usuário sobre esta tarefa:",
       "Tarefa: Review the report", "Descrição: Leave the report in English.", "Prazo: tomorrow", "Prioridade: 4",
       `Etiquetas: ${ai ? "AI, work" : "work"}`, "Link: https://todoist.com/showTask?id=task-1", "Lembrete: today at 9am",
