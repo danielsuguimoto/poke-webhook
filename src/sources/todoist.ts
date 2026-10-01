@@ -104,7 +104,7 @@ function translate(reminder: TodoistReminder, task: TodoistTask): string {
   const firedAt = reminder.due?.string ?? reminder.due?.date;
   const due = task.due?.string ?? task.due?.date;
   const header = hasAiLabel(task.labels)
-    ? `[Todoist] Lembrete disparado para uma tarefa com a etiqueta "${AI_LABEL}" — execute esta tarefa:`
+    ? `[Todoist] Lembrete disparado para uma tarefa com a etiqueta "${AI_LABEL}" — execute esta tarefa e, após a execução, marque-a como concluída no Todoist:`
     : "[Todoist] Lembrete disparado — avise o usuário sobre esta tarefa:";
   return [
     header,
