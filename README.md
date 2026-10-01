@@ -106,7 +106,9 @@ In the Worker's **Settings > Build > Build Configuration**, use these commands:
 
 Replace any `npx wrangler preview` configured for non-production builds with `npm run deploy:preview`. The deprecated `wrangler preview` command fails instead of uploading a preview version. `wrangler versions upload` creates a version and preview URL without promoting it to production; `wrangler dev` starts a development server and is not a deployment command. See the [Workers Builds configuration docs](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
 
-Build commands are saved in the Cloudflare dashboard; changing the npm script alone does not update those settings. After saving the command, retry the failed build.
+Build commands are saved in the Cloudflare dashboard; changing the npm script alone does not update those settings. Production and non-production commands are separate: PR builds use **Non-production branch deploy command**, even if you have changed **Deploy command**.
+
+Save the non-production command, then push a commit to the PR branch to trigger a new build. Verify that the new build log runs `npm run deploy:preview` (which invokes `wrangler versions upload`). If a retry still runs `npx wrangler preview`, check the non-production setting and validate a new build rather than repeating that retry.
 
 ## Develop
 
