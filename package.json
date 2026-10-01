@@ -7,12 +7,14 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "deploy:preview": "wrangler preview",
+    "test": "tsc --noEmit false --module commonjs --moduleResolution node --outDir .test-build && node --test tests/*.cjs",
     "typecheck": "tsc --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20250101.0",
+    "@cloudflare/workers-types": "5.20260926.1",
     "typescript": "^5.6.3",
-    "wrangler": "^3.90.0"
+    "wrangler": "4.144.0"
   },
   "dependencies": {
     "standardwebhooks": "^1.1.1"

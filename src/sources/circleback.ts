@@ -86,42 +86,42 @@ function translate(payload: Record<string, unknown>): string | null {
   if (!m || typeof m !== "object" || !m.id) return null;
 
   const durationMin =
-    typeof m.duration === "number" ? `${(m.duration / 60).toFixed(1)}m` : "unknown";
+    typeof m.duration === "number" ? `${(m.duration / 60).toFixed(1)} min` : "não informada";
   const attendees = (m.attendees ?? [])
-    .map((a) => a.name || a.email || "unknown")
+    .map((a) => a.name || a.email || "não informado")
     .join(", ");
   const tags = (m.tags ?? []).join(", ");
   const link = `https://circleback.ai/meetings/${m.id}`;
 
   const lines: string[] = [
-    `[Circleback] Meeting notes for "${m.name ?? "untitled"}":`,
+    `[Circleback] Notas da reunião "${m.name ?? "sem título"}":`,
     `Link: ${link}`,
-    `Time: ${m.createdAt ?? "unknown"}`,
-    `Duration: ${durationMin}`,
-    ...(attendees ? [`Attendees: ${attendees}`] : []),
-    ...(tags ? [`Tags: ${tags}`] : []),
-    ...(m.url ? [`Meeting URL: ${m.url}`] : []),
+    `Data e hora: ${m.createdAt ?? "não informadas"}`,
+    `Duração: ${durationMin}`,
+    ...(attendees ? [`Participantes: ${attendees}`] : []),
+    ...(tags ? [`Etiquetas: ${tags}`] : []),
+    ...(m.url ? [`URL da reunião: ${m.url}`] : []),
   ];
 
   const actionItems = m.actionItems ?? [];
   if (actionItems.length) {
-    lines.push("", "Action items:");
+    lines.push("", "Ações:");
     for (const item of actionItems) {
       const assignee = item.assignee
-        ? item.assignee.name || item.assignee.email || "unknown"
-        : "unassigned";
-      const status = item.status === "DONE" ? "[done]" : "[pending]";
-      lines.push(`- ${status} ${item.title ?? "(untitled)"} (assigned to ${assignee})`);
+        ? item.assignee.name || item.assignee.email || "não informado"
+        : "sem responsável";
+      const status = item.status === "DONE" ? "[concluído]" : "[pendente]";
+      lines.push(`- ${status} ${item.title ?? "(sem título)"} (responsável: ${assignee})`);
     }
   }
 
   if (m.notes) {
-    lines.push("", "Notes:", m.notes);
+    lines.push("", "Notas:", m.notes);
   }
 
   const insights = m.insights;
   if (insights && typeof insights === "object" && Object.keys(insights).length) {
-    lines.push("", "Insights:");
+    lines.push("", "Observações:");
     for (const [name, entries] of Object.entries(insights)) {
       if (!Array.isArray(entries)) continue;
       for (const entry of entries) {
@@ -141,9 +141,9 @@ function translate(payload: Record<string, unknown>): string | null {
 
   const transcript = m.transcript ?? [];
   if (transcript.length) {
-    lines.push("", `Transcript (${transcript.length} segments):`);
+    lines.push("", `Transcrição (${transcript.length} segmentos):`);
     for (const seg of transcript) {
-      lines.push(`${seg.speaker ?? "unknown"}: ${seg.text ?? ""}`);
+      lines.push(`${seg.speaker ?? "não informado"}: ${seg.text ?? ""}`);
     }
   }
 

@@ -22,6 +22,8 @@ Other event types are acknowledged with `202` and not forwarded (Todoist gets `2
 4. The message is forwarded to `POST $POKE_API_URL` with `Authorization: Bearer $POKE_API_KEY`.
 5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`.
 
+Generated message headers, labels, instructions, and fallback text are in Portuguese. Source content (such as email bodies, meeting notes, task descriptions, event identifiers, and the GOAL API JSON payload) stays in its original language.
+
 ## Configuration
 
 ### Non-secret vars (`wrangler.jsonc`)
@@ -93,13 +95,32 @@ Example for Todoist. In the App Management Console, set the webhook callback URL
 1. Create `src/sources/<name>.ts` exporting a `SourceHandler` (`handle(payload, env, ctx)` → `Response`, optional `authorize(rawBody, request, env)` → `Response | null`).
 2. Register it in `src/index.ts` under a new path in `ROUTES`.
 
+## Cloudflare Workers Builds
+
+In the Worker's **Settings > Builds**, use these commands in the **Production** and **Previews Base** configurations:
+
+| Setting | Command |
+|---------|---------|
+| Deploy command (Production) | `npm run deploy` |
+| Preview command (Previews Base) | `npm run deploy:preview` |
+
+This project uses [Worker Previews](https://developers.cloudflare.com/workers/previews/get-started/), which requires Wrangler 4.135.0 or later. `npm run deploy:preview` runs the supported `wrangler preview` command to create or update the current branch's Preview. Wrangler 3 has an older, deprecated command with the same name; Cloudflare uses the project's installed version, so updating only the dashboard command does not fix that version mismatch. `wrangler dev` starts a development server; `wrangler versions upload` belongs to the separate [Version URLs workflow](https://developers.cloudflare.com/workers/previews/compare-workflows/).
+
+Preview settings are defined in the `previews` block of `wrangler.jsonc`. Previews do not inherit production variables or secrets. Add any required Preview secrets to **Previews Base** or to the individual Preview; see the [Preview configuration docs](https://developers.cloudflare.com/workers/previews/configuration/).
+
+Build commands are saved separately in Cloudflare. Save the Preview command, then push a commit to the PR branch to trigger a new build. Either `npm run deploy:preview` or `npx wrangler preview` uses the supported command once the project dependency is updated.
+
 ## Develop
+
+Use Node.js 22 or later, as required by Wrangler 4.
 
 ```
 npm install
 npm run dev        # local dev via wrangler
 npm run typecheck
+npm test          # message translation and source-data preservation
 npm run deploy     # publish to Cloudflare
+npm run deploy:preview # deploy the current branch's Worker Preview
 ```
 
 ## Responses
