@@ -103,6 +103,7 @@ function translate(reminder: TodoistReminder, task: TodoistTask): string {
   const labels = Array.isArray(task.labels) ? task.labels.join(", ") : "";
   const firedAt = reminder.due?.string ?? reminder.due?.date;
   const due = task.due?.string ?? task.due?.date;
+  const url = task.url ?? (task.id ? `https://todoist.com/showTask?id=${task.id}` : undefined);
   const header = hasAiLabel(task.labels)
     ? `[Todoist] Lembrete disparado para uma tarefa com a etiqueta "${AI_LABEL}" — execute esta tarefa e, após a execução, marque-a como concluída no Todoist:`
     : "[Todoist] Lembrete disparado — avise o usuário sobre esta tarefa:";
@@ -113,7 +114,7 @@ function translate(reminder: TodoistReminder, task: TodoistTask): string {
     ...(due ? [`Prazo: ${due}`] : []),
     `Prioridade: ${task.priority ?? "não informada"}`,
     ...(labels ? [`Etiquetas: ${labels}`] : []),
-    ...(task.url ? [`Link: ${task.url}`] : []),
+    ...(url ? [`Link: ${url}`] : []),
     ...(firedAt ? [`Lembrete: ${firedAt}`] : []),
   ].join("\n");
 }
