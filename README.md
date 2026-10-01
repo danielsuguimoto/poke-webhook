@@ -95,6 +95,19 @@ Example for Todoist. In the App Management Console, set the webhook callback URL
 1. Create `src/sources/<name>.ts` exporting a `SourceHandler` (`handle(payload, env, ctx)` → `Response`, optional `authorize(rawBody, request, env)` → `Response | null`).
 2. Register it in `src/index.ts` under a new path in `ROUTES`.
 
+## Cloudflare Workers Builds
+
+In the Worker's **Settings > Build > Build Configuration**, use these commands:
+
+| Setting | Command |
+|---------|---------|
+| Deploy command (production) | `npm run deploy` |
+| Non-production branch deploy command | `npm run deploy:preview` |
+
+Replace any `npx wrangler preview` configured for non-production builds with `npm run deploy:preview`. The deprecated `wrangler preview` command fails instead of uploading a preview version. `wrangler versions upload` creates a version and preview URL without promoting it to production; `wrangler dev` starts a development server and is not a deployment command. See the [Workers Builds configuration docs](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
+
+Build commands are saved in the Cloudflare dashboard; changing the npm script alone does not update those settings. After saving the command, retry the failed build.
+
 ## Develop
 
 ```
@@ -103,6 +116,7 @@ npm run dev        # local dev via wrangler
 npm run typecheck
 npm test          # message translation and source-data preservation
 npm run deploy     # publish to Cloudflare
+npm run deploy:preview # upload a preview version without deploying to production
 ```
 
 ## Responses
