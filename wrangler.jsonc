@@ -8,5 +8,10 @@
   },
   "vars": {
     "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message"
+  },
+  "previews": {
+    "vars": {
+      "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message"
+    }
   }
 }

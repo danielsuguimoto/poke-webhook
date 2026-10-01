@@ -97,20 +97,22 @@ Example for Todoist. In the App Management Console, set the webhook callback URL
 
 ## Cloudflare Workers Builds
 
-In the Worker's **Settings > Build > Build Configuration**, use these commands:
+In the Worker's **Settings > Builds**, use these commands in the **Production** and **Previews Base** configurations:
 
 | Setting | Command |
 |---------|---------|
-| Deploy command (production) | `npm run deploy` |
-| Non-production branch deploy command | `npm run deploy:preview` |
+| Deploy command (Production) | `npm run deploy` |
+| Preview command (Previews Base) | `npm run deploy:preview` |
 
-Replace any `npx wrangler preview` configured for non-production builds with `npm run deploy:preview`. The deprecated `wrangler preview` command fails instead of uploading a preview version. `wrangler versions upload` creates a version and preview URL without promoting it to production; `wrangler dev` starts a development server and is not a deployment command. See the [Workers Builds configuration docs](https://developers.cloudflare.com/workers/ci-cd/builds/configuration/).
+This project uses [Worker Previews](https://developers.cloudflare.com/workers/previews/get-started/), which requires Wrangler 4.135.0 or later. `npm run deploy:preview` runs the supported `wrangler preview` command to create or update the current branch's Preview. Wrangler 3 has an older, deprecated command with the same name; Cloudflare uses the project's installed version, so updating only the dashboard command does not fix that version mismatch. `wrangler dev` starts a development server; `wrangler versions upload` belongs to the separate [Version URLs workflow](https://developers.cloudflare.com/workers/previews/compare-workflows/).
 
-Build commands are saved in the Cloudflare dashboard; changing the npm script alone does not update those settings. Production and non-production commands are separate: PR builds use **Non-production branch deploy command**, even if you have changed **Deploy command**.
+Preview settings are defined in the `previews` block of `wrangler.jsonc`. Previews do not inherit production variables or secrets. Add any required Preview secrets to **Previews Base** or to the individual Preview; see the [Preview configuration docs](https://developers.cloudflare.com/workers/previews/configuration/).
 
-Save the non-production command, then push a commit to the PR branch to trigger a new build. Verify that the new build log runs `npm run deploy:preview` (which invokes `wrangler versions upload`). If a retry still runs `npx wrangler preview`, check the non-production setting and validate a new build rather than repeating that retry.
+Build commands are saved separately in Cloudflare. Save the Preview command, then push a commit to the PR branch to trigger a new build. Either `npm run deploy:preview` or `npx wrangler preview` uses the supported command once the project dependency is updated.
 
 ## Develop
+
+Use Node.js 22 or later, as required by Wrangler 4.
 
 ```
 npm install
@@ -118,7 +120,7 @@ npm run dev        # local dev via wrangler
 npm run typecheck
 npm test          # message translation and source-data preservation
 npm run deploy     # publish to Cloudflare
-npm run deploy:preview # upload a preview version without deploying to production
+npm run deploy:preview # deploy the current branch's Worker Preview
 ```
 
 ## Responses
