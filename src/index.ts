@@ -15,7 +15,7 @@ export interface Env {
   PLUGGY_WEBHOOK_SECRET: string;
   TODOIST_WEBHOOK_SECRET: string;
   TODOIST_API_TOKEN: string;
-  TINYFISH_API_KEY?: string;
+  TINYFISH_API_KEY: string;
   POKE_API_URL?: string;
 }
 

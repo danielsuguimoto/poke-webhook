@@ -50,10 +50,10 @@ export const tinyfish: SourceHandler = {
     if (!SUPPORTED_EVENTS.includes(event as TinyfishEvent)) {
       return ignored(event, runId);
     }
-    if (env.TINYFISH_API_KEY) {
-      const verification = await verifyRun(runId, event as TinyfishEvent, env.TINYFISH_API_KEY);
-      if (verification) return verification;
-    }
+    if (!env.TINYFISH_API_KEY) return json(500, { error: "missing_tinyfish_api_key" });
+
+    const verification = await verifyRun(runId, event as TinyfishEvent, env.TINYFISH_API_KEY);
+    if (verification) return verification;
 
     if (!markSeen(runId)) return ignored(event, runId);
 
@@ -77,15 +77,16 @@ async function verifyRun(
     if (res.status === 404) return json(401, { error: "unknown_run" });
     if (!res.ok) {
       console.error(`TinyFish API error ${res.status} verifying run ${runId}`);
-      return null;
+      return json(503, { error: "verification_failed" });
     }
     const run = (await res.json()) as { status?: string };
     const expected = event.split(".")[1].toUpperCase();
-    if (run.status && run.status !== expected) {
+    if (run.status !== expected) {
       return json(409, { error: "status_mismatch", status: run.status });
     }
   } catch (err) {
     console.error(`TinyFish run verification failed for ${runId}:`, err);
+    return json(503, { error: "verification_failed" });
   }
   return null;
 }

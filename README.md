@@ -46,7 +46,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `PLUGGY_WEBHOOK_SECRET` | Shared secret you choose; Pluggy sends it as the `x-webhook-secret` header |
 | `TODOIST_WEBHOOK_SECRET` | Todoist app `client_secret`, from the [App Management Console](https://app.todoist.com/app/settings/integrations/app-management-console); used to verify `X-Todoist-Hmac-SHA256` |
 | `TODOIST_API_TOKEN` | Todoist API token (personal token from Settings → Integrations, or OAuth access token); used to fetch the task when a reminder fires |
-| `TINYFISH_API_KEY` | Optional. TinyFish API key; when set, each webhook's `run_id` is verified against `GET /v1/runs/{id}` before forwarding (TinyFish does not sign webhooks) |
+| `TINYFISH_API_KEY` | TinyFish API key; each webhook's `run_id` is verified against `GET /v1/runs/{id}` before forwarding (TinyFish does not sign webhooks, so the worker fails closed without the key) |
 
 ```
 wrangler secret put POKE_API_KEY
@@ -56,7 +56,7 @@ wrangler secret put GOAL_API_WEBHOOK_SECRET
 wrangler secret put PLUGGY_WEBHOOK_SECRET
 wrangler secret put TODOIST_WEBHOOK_SECRET
 wrangler secret put TODOIST_API_TOKEN
-wrangler secret put TINYFISH_API_KEY  # optional but recommended
+wrangler secret put TINYFISH_API_KEY
 ```
 
 ## Register a webhook
@@ -101,7 +101,7 @@ curl -X POST https://agent.tinyfish.ai/v1/automation/run-async \
        "webhook_url": "https://<your-worker>.workers.dev/tinyfish"}'
 ```
 
-TinyFish does not sign webhook deliveries; set `TINYFISH_API_KEY` so the worker verifies each `run_id` against `GET /v1/runs/{id}` before forwarding, and keep the worker URL unguessable. Duplicate deliveries of the same `run_id` are deduplicated and acknowledged with `202`.
+TinyFish does not sign webhook deliveries, so the worker verifies each `run_id` against `GET /v1/runs/{id}` before forwarding — `TINYFISH_API_KEY` is required (the endpoint fails closed without it), unknown runs get `401`, status mismatches get `409`, and verification errors get `503` so TinyFish retries. Duplicate deliveries of the same `run_id` are deduplicated and acknowledged with `202`.
 
 Example for Todoist. In the App Management Console, set the webhook callback URL to `https://<your-worker>.workers.dev/todoist` and subscribe to `reminder:fired`. Webhooks only fire for users who completed your app's OAuth flow — for personal use, run the OAuth flow manually once with your own account (see the [Todoist docs](https://developer.todoist.com/api/v1/#tag/Webhooks)). When a reminder fires, the worker fetches the task from the Todoist API using `TODOIST_API_TOKEN` and forwards it to Poke; tasks with the `ai` label are executed by Poke (which is instructed to mark them complete in Todoist afterwards), while the rest only trigger a warning to you.
 
