@@ -3,6 +3,7 @@ const { test } = require("node:test");
 const { agentmail } = require("../.test-build/sources/agentmail.js");
 const { circleback } = require("../.test-build/sources/circleback.js");
 const { goalApi } = require("../.test-build/sources/goal-api.js");
+const { parallel } = require("../.test-build/sources/parallel.js");
 const { pluggy } = require("../.test-build/sources/pluggy.js");
 const { todoist } = require("../.test-build/sources/todoist.js");
 
@@ -170,4 +171,86 @@ test("Todoist missing task metadata uses Portuguese fallbacks", async (t) => {
   assert.equal(message, [
     "[Todoist] Lembrete disparado — avise o usuário sobre esta tarefa:", "Tarefa: (sem título)", "Prioridade: não informada",
   ].join("\n"));
+});
+
+async function parallelForwardedMessage(t, payload, { input = null, result = null } = {}) {
+  const calls = [];
+  const pending = [];
+  const env = { POKE_API_KEY: "test-poke-key", PARALLEL_API_KEY: "test-parallel-key" };
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (url.startsWith("https://api.parallel.ai/")) {
+      assert.equal(options.headers["x-api-key"], "test-parallel-key");
+      if (url.endsWith("/input")) return Response.json(input);
+      if (url.endsWith("/result")) return Response.json(result);
+      throw new Error(`unexpected Parallel URL ${url}`);
+    }
+    calls.push({ url, options });
+    return Response.json({});
+  });
+
+  const response = await parallel.handle(payload, env, { waitUntil: (p) => pending.push(p) });
+  await Promise.all(pending);
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "https://poke.com/api/v1/inbound/api-message");
+  assert.equal(calls[0].options.headers.Authorization, "Bearer test-poke-key");
+  return JSON.parse(calls[0].options.body).message;
+}
+
+test("Parallel completed run forwards input and output, preserving source content", async (t) => {
+  const message = await parallelForwardedMessage(t, {
+    timestamp: "2025-04-23T20:21:48.037943Z", type: "task_run.status",
+    data: {
+      run_id: "trun_abc123", status: "completed", is_active: false, processor: "core",
+      metadata: { key: "value" }, created_at: "2025-04-23T20:20:00Z", modified_at: "2025-04-23T20:21:48.037943Z",
+    },
+  }, {
+    input: { processor: "core", input: { country: "France", year: 2023 } },
+    result: { output: { type: "json", content: { gdp: "$3.1 trillion (2023)" } } },
+  });
+  assert.equal(message, [
+    "[Parallel] Execução de tarefa concluída:", "ID da execução: trun_abc123", "Status: completed",
+    "Processador: core", "Data e hora: 2025-04-23T20:21:48.037943Z", "", "Entrada:",
+    JSON.stringify({ country: "France", year: 2023 }, null, 2), "", "Resultado:",
+    JSON.stringify({ gdp: "$3.1 trillion (2023)" }, null, 2), 'Metadados: {\n  "key": "value"\n}',
+  ].join("\n"));
+});
+
+test("Parallel failed run reports the error and skips the result fetch", async (t) => {
+  const message = await parallelForwardedMessage(t, {
+    timestamp: "2025-04-23T20:21:48.037943Z", type: "task_run.status",
+    data: {
+      run_id: "trun_def456", status: "failed", processor: "base",
+      error: { message: "Task execution failed", details: "Additional error details" },
+    },
+  }, { input: { input: "France (2023)" } });
+  assert.equal(message, [
+    "[Parallel] Execução de tarefa falhou:", "ID da execução: trun_def456", "Status: failed",
+    "Processador: base", "Data e hora: 2025-04-23T20:21:48.037943Z", "", "Entrada:", "France (2023)",
+    "Erro: Task execution failed — Additional error details",
+  ].join("\n"));
+});
+
+test("Parallel non-terminal status is ignored without forwarding", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => { calls.push(url); return Response.json({}); });
+  const response = await parallel.handle(
+    { type: "task_run.status", data: { run_id: "trun_abc123", status: "running" } },
+    { POKE_API_KEY: "k", PARALLEL_API_KEY: "k" }, { waitUntil: () => {} },
+  );
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), { status: "ignored", event_type: "task_run.status", event_id: "trun_abc123" });
+  assert.equal(calls.length, 0);
+});
+
+test("Parallel malformed run id returns 400 and unknown types are ignored", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json({}));
+  const env = { POKE_API_KEY: "k", PARALLEL_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+
+  const bad = await parallel.handle({ type: "task_run.status", data: { run_id: "bogus" } }, env, ctx);
+  assert.equal(bad.status, 400);
+
+  const other = await parallel.handle({ type: "other.event", data: {} }, env, ctx);
+  assert.equal(other.status, 202);
 });
