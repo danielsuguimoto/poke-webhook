@@ -10,6 +10,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
 | `POST /goal-api` | [GOAL API](https://goal-api.com/documentation#webhooks) | `match.started`, `match.finished`, `goal.scored`, `score.changed`, `match.status_changed` — the full payload is forwarded as JSON |
 | `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
+| `POST /tinyfish` | [TinyFish](https://docs.tinyfish.ai/webhooks) | `run.completed`, `run.failed`, `run.cancelled` — deliveries are deduplicated by `run_id` |
 | `POST /todoist` | [Todoist](https://developer.todoist.com/api/v1/#tag/Webhooks) | `reminder:fired` — the task is fetched via the Todoist API and forwarded; Poke executes tasks with the `ai` label (marking them complete afterwards) and warns you about the rest |
 
 Other event types are acknowledged with `202` and not forwarded (Todoist gets `200` instead — it retries any non-`200` delivery).
@@ -45,6 +46,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `PLUGGY_WEBHOOK_SECRET` | Shared secret you choose; Pluggy sends it as the `x-webhook-secret` header |
 | `TODOIST_WEBHOOK_SECRET` | Todoist app `client_secret`, from the [App Management Console](https://app.todoist.com/app/settings/integrations/app-management-console); used to verify `X-Todoist-Hmac-SHA256` |
 | `TODOIST_API_TOKEN` | Todoist API token (personal token from Settings → Integrations, or OAuth access token); used to fetch the task when a reminder fires |
+| `TINYFISH_API_KEY` | Optional. TinyFish API key; when set, each webhook's `run_id` is verified against `GET /v1/runs/{id}` before forwarding (TinyFish does not sign webhooks) |
 
 ```
 wrangler secret put POKE_API_KEY
@@ -54,6 +56,7 @@ wrangler secret put GOAL_API_WEBHOOK_SECRET
 wrangler secret put PLUGGY_WEBHOOK_SECRET
 wrangler secret put TODOIST_WEBHOOK_SECRET
 wrangler secret put TODOIST_API_TOKEN
+wrangler secret put TINYFISH_API_KEY  # optional but recommended
 ```
 
 ## Register a webhook
@@ -87,6 +90,18 @@ curl -X PATCH https://api.pluggy.ai/webhooks/<webhook_id> \
 Set the same value as `PLUGGY_WEBHOOK_SECRET`. For extra security you can also whitelist Pluggy's egress IP `52.67.145.81` at the network layer.
 
 Example for GOAL API. Create the endpoint in the [webhooks dashboard](https://goal-api.com/dashboard/webhooks) pointing at `https://<your-worker>.workers.dev/goal-api`, select the events and (optionally) `leagueIds` to filter competitions. The signing secret is shown once at creation — copy it into `GOAL_API_WEBHOOK_SECRET`. Deliveries are signed via `X-Goal-Signature: t=<ts>,v1=<hmac-sha256 hex>` over `<ts>.<raw body>`, and signatures older than five minutes are rejected.
+
+Example for TinyFish. Pass `webhook_url` when creating a run (must be HTTPS):
+
+```
+curl -X POST https://agent.tinyfish.ai/v1/automation/run-async \
+  -H "X-API-Key: $TINYFISH_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://example.com", "goal": "Extract the page title",
+       "webhook_url": "https://<your-worker>.workers.dev/tinyfish"}'
+```
+
+TinyFish does not sign webhook deliveries; set `TINYFISH_API_KEY` so the worker verifies each `run_id` against `GET /v1/runs/{id}` before forwarding, and keep the worker URL unguessable. Duplicate deliveries of the same `run_id` are deduplicated and acknowledged with `202`.
 
 Example for Todoist. In the App Management Console, set the webhook callback URL to `https://<your-worker>.workers.dev/todoist` and subscribe to `reminder:fired`. Webhooks only fire for users who completed your app's OAuth flow — for personal use, run the OAuth flow manually once with your own account (see the [Todoist docs](https://developer.todoist.com/api/v1/#tag/Webhooks)). When a reminder fires, the worker fetches the task from the Todoist API using `TODOIST_API_TOKEN` and forwards it to Poke; tasks with the `ai` label are executed by Poke (which is instructed to mark them complete in Todoist afterwards), while the rest only trigger a warning to you.
 

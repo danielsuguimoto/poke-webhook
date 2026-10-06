@@ -171,3 +171,139 @@ test("Todoist missing task metadata uses Portuguese fallbacks", async (t) => {
     "[Todoist] Lembrete disparado — avise o usuário sobre esta tarefa:", "Tarefa: (sem título)", "Prioridade: não informada",
   ].join("\n"));
 });
+
+const { tinyfish } = require("../.test-build/sources/tinyfish.js");
+
+test("TinyFish run.completed forwards goal, status and result", async (t) => {
+  const message = await forwardedMessage(t, tinyfish, {
+    event: "run.completed", run_id: "run-completed-1", status: "COMPLETED",
+    data: {
+      goal: "Extract the page title", status: "COMPLETED",
+      started_at: "2026-03-25T10:30:05Z", finished_at: "2026-03-25T10:30:45Z",
+      num_of_steps: 3, result: { title: "Example Domain" }, error: null,
+      streaming_url: "https://tf-abc123.fra0-tinyfish.unikraft.app/stream/0",
+    },
+  });
+  assert.equal(message, [
+    "[Tinyfish] Execução concluída:", "ID da execução: run-completed-1",
+    "Objetivo: Extract the page title", "Status: COMPLETED",
+    "Início: 2026-03-25T10:30:05Z — Fim: 2026-03-25T10:30:45Z",
+    "Passos: 3", "Gravação: https://tf-abc123.fra0-tinyfish.unikraft.app/stream/0",
+    "", "Resultado:", '{\n  "title": "Example Domain"\n}',
+  ].join("\n"));
+});
+
+test("TinyFish run.failed forwards error category and message", async (t) => {
+  const message = await forwardedMessage(t, tinyfish, {
+    event: "run.failed", run_id: "run-failed-1", status: "FAILED",
+    data: { error: { message: "Site blocked access", category: "AGENT_FAILURE" }, result: null },
+  });
+  assert.equal(message, [
+    "[Tinyfish] Execução falhou:", "ID da execução: run-failed-1",
+    "Erro: AGENT_FAILURE — Site blocked access",
+  ].join("\n"));
+});
+
+test("TinyFish run.cancelled forwards a cancellation notice", async (t) => {
+  const message = await forwardedMessage(t, tinyfish, {
+    event: "run.cancelled", run_id: "run-cancelled-1", status: "CANCELLED", data: {},
+  });
+  assert.equal(message, [
+    "[Tinyfish] Execução cancelada:", "ID da execução: run-cancelled-1",
+  ].join("\n"));
+});
+
+test("TinyFish rejects malformed payloads with 400", async () => {
+  const ctx = { waitUntil: () => {} };
+  for (const payload of [
+    {}, { event: "run.completed" }, { run_id: "run-1" }, { event: "run.completed", run_id: 42 },
+  ]) {
+    const res = await tinyfish.handle(payload, { POKE_API_KEY: "k" }, ctx);
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, "invalid_payload");
+  }
+});
+
+test("TinyFish acknowledges unknown events with 202 without forwarding", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({});
+  });
+  const res = await tinyfish.handle(
+    { event: "run.started", run_id: "run-unknown-1" },
+    { POKE_API_KEY: "k" },
+    { waitUntil: () => {} },
+  );
+  assert.equal(res.status, 202);
+  assert.equal(calls.length, 0);
+});
+
+test("TinyFish deduplicates deliveries by run_id", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({});
+  });
+  const pending = [];
+  const ctx = { waitUntil: (p) => pending.push(p) };
+  const payload = { event: "run.completed", run_id: "run-dup-1", data: {} };
+  const env = { POKE_API_KEY: "k" };
+
+  const first = await tinyfish.handle(structuredClone(payload), env, ctx);
+  const second = await tinyfish.handle(structuredClone(payload), env, ctx);
+  await Promise.all(pending);
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 202);
+  assert.equal(calls.length, 1);
+});
+
+test("TinyFish verifies run_id against the API when TINYFISH_API_KEY is set", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    if (url.startsWith("https://agent.tinyfish.ai/")) {
+      assert.equal(url, "https://agent.tinyfish.ai/v1/runs/run-verified-1");
+      assert.equal(options.headers["X-API-Key"], "tinyfish-key");
+      return Response.json({ status: "COMPLETED" });
+    }
+    return Response.json({});
+  });
+  const pending = [];
+  const res = await tinyfish.handle(
+    { event: "run.completed", run_id: "run-verified-1", data: {} },
+    { POKE_API_KEY: "k", TINYFISH_API_KEY: "tinyfish-key" },
+    { waitUntil: (p) => pending.push(p) },
+  );
+  await Promise.all(pending);
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 2);
+});
+
+test("TinyFish rejects runs the API does not know", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push(url);
+    return new Response("not found", { status: 404 });
+  });
+  const res = await tinyfish.handle(
+    { event: "run.completed", run_id: "run-forged-1", data: {} },
+    { POKE_API_KEY: "k", TINYFISH_API_KEY: "tinyfish-key" },
+    { waitUntil: () => {} },
+  );
+  assert.equal(res.status, 401);
+  assert.equal(calls.length, 1);
+});
+
+test("TinyFish rejects payloads whose status does not match the run", async (t) => {
+  t.mock.method(globalThis, "fetch", async () =>
+    Response.json({ status: "FAILED" }),
+  );
+  const res = await tinyfish.handle(
+    { event: "run.completed", run_id: "run-mismatch-1", data: {} },
+    { POKE_API_KEY: "k", TINYFISH_API_KEY: "tinyfish-key" },
+    { waitUntil: () => {} },
+  );
+  assert.equal(res.status, 409);
+});

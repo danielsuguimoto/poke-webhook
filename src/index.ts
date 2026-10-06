@@ -4,6 +4,7 @@ import { agentmail } from "./sources/agentmail";
 import { circleback } from "./sources/circleback";
 import { goalApi } from "./sources/goal-api";
 import { pluggy } from "./sources/pluggy";
+import { tinyfish } from "./sources/tinyfish";
 import { todoist } from "./sources/todoist";
 
 export interface Env {
@@ -14,6 +15,7 @@ export interface Env {
   PLUGGY_WEBHOOK_SECRET: string;
   TODOIST_WEBHOOK_SECRET: string;
   TODOIST_API_TOKEN: string;
+  TINYFISH_API_KEY?: string;
   POKE_API_URL?: string;
 }
 
@@ -31,6 +33,7 @@ const ROUTES: Record<string, SourceHandler> = {
   "/circleback": circleback,
   "/goal-api": goalApi,
   "/pluggy": pluggy,
+  "/tinyfish": tinyfish,
   "/todoist": todoist,
 };
 
