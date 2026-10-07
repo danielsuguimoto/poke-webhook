@@ -3,6 +3,7 @@ import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
 import { circleback } from "./sources/circleback";
 import { goalApi } from "./sources/goal-api";
+import { parallel } from "./sources/parallel";
 import { pluggy } from "./sources/pluggy";
 import { tinyfish } from "./sources/tinyfish";
 import { todoist } from "./sources/todoist";
@@ -12,10 +13,13 @@ export interface Env {
   AGENTMAIL_WEBHOOK_SECRET: string;
   CIRCLEBACK_WEBHOOK_SECRET: string;
   GOAL_API_WEBHOOK_SECRET: string;
+  PARALLEL_WEBHOOK_SECRET: string;
+  PARALLEL_API_KEY: string;
   PLUGGY_WEBHOOK_SECRET: string;
   TODOIST_WEBHOOK_SECRET: string;
   TODOIST_API_TOKEN: string;
   TINYFISH_API_KEY: string;
+  PARALLEL_API_URL?: string;
   POKE_API_URL?: string;
 }
 
@@ -32,6 +36,7 @@ const ROUTES: Record<string, SourceHandler> = {
   "/agentmail": agentmail,
   "/circleback": circleback,
   "/goal-api": goalApi,
+  "/parallel": parallel,
   "/pluggy": pluggy,
   "/tinyfish": tinyfish,
   "/todoist": todoist,

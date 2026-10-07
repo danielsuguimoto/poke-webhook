@@ -9,6 +9,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /agentmail` | [AgentMail](https://docs.agentmail.to/webhooks-overview) | `message.received`, `message.sent`, `message.delivered` |
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
 | `POST /goal-api` | [GOAL API](https://goal-api.com/documentation#webhooks) | `match.started`, `match.finished`, `goal.scored`, `score.changed`, `match.status_changed` — the full payload is forwarded as JSON |
+| `POST /parallel` | [Parallel](https://docs.parallel.ai/task-api/webhooks) | `task_run.status` — the run input is fetched via `GET /v1/tasks/runs/{run_id}/input` and the result via `GET /v1/tasks/runs/{run_id}/result` (completed runs) and forwarded |
 | `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
 | `POST /tinyfish` | [TinyFish](https://docs.tinyfish.ai/webhooks) | `run.completed`, `run.failed`, `run.cancelled` — deliveries are deduplicated by `run_id` |
 | `POST /todoist` | [Todoist](https://developer.todoist.com/api/v1/#tag/Webhooks) | `reminder:fired` — the task is fetched via the Todoist API and forwarded; Poke executes tasks with the `ai` label (marking them complete afterwards) and warns you about the rest |
@@ -43,6 +44,8 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `AGENTMAIL_WEBHOOK_SECRET` | AgentMail webhook signing secret (`whsec_...`), from `agentmail webhooks get` or the AgentMail console |
 | `CIRCLEBACK_WEBHOOK_SECRET` | Circleback webhook signing secret, provided when configuring a webhook automation |
 | `GOAL_API_WEBHOOK_SECRET` | GOAL API endpoint signing secret, shown once when creating a webhook endpoint in the [dashboard](https://goal-api.com/dashboard/webhooks); verifies `X-Goal-Signature` |
+| `PARALLEL_WEBHOOK_SECRET` | Parallel account webhook secret (`whsec_...`), from Settings → Webhooks on [platform.parallel.ai](https://platform.parallel.ai); verifies `webhook-signature` (Standard Webhooks) |
+| `PARALLEL_API_KEY` | Parallel API key; used to fetch the run input and result when a `task_run.status` event arrives |
 | `PLUGGY_WEBHOOK_SECRET` | Shared secret you choose; Pluggy sends it as the `x-webhook-secret` header |
 | `TODOIST_WEBHOOK_SECRET` | Todoist app `client_secret`, from the [App Management Console](https://app.todoist.com/app/settings/integrations/app-management-console); used to verify `X-Todoist-Hmac-SHA256` |
 | `TODOIST_API_TOKEN` | Todoist API token (personal token from Settings → Integrations, or OAuth access token); used to fetch the task when a reminder fires |
@@ -53,6 +56,8 @@ wrangler secret put POKE_API_KEY
 wrangler secret put AGENTMAIL_WEBHOOK_SECRET
 wrangler secret put CIRCLEBACK_WEBHOOK_SECRET
 wrangler secret put GOAL_API_WEBHOOK_SECRET
+wrangler secret put PARALLEL_WEBHOOK_SECRET
+wrangler secret put PARALLEL_API_KEY
 wrangler secret put PLUGGY_WEBHOOK_SECRET
 wrangler secret put TODOIST_WEBHOOK_SECRET
 wrangler secret put TODOIST_API_TOKEN
@@ -103,6 +108,17 @@ curl -X POST https://agent.tinyfish.ai/v1/automation/run-async \
 
 TinyFish does not sign webhook deliveries, so the worker verifies each `run_id` against `GET /v1/runs/{id}` before forwarding — `TINYFISH_API_KEY` is required (the endpoint fails closed without it), unknown runs get `401`, status mismatches get `409`, and verification errors get `503` so TinyFish retries. Duplicate deliveries of the same `run_id` are deduplicated and acknowledged with `202`.
 
+Example for Parallel. Pass the `webhook` parameter when creating a task run; deliveries are signed following the [Standard Webhooks spec](https://docs.parallel.ai/resources/webhook-setup) (`webhook-id`, `webhook-timestamp`, `webhook-signature` headers):
+
+```
+curl -X POST https://api.parallel.ai/v1/tasks/runs \
+  -H "x-api-key: $PARALLEL_API_KEY" \
+  -H "Content-Type: application/json" \
+  -d '{"input": "France (2023)", "processor": "core", "webhook": {"url": "https://<your-worker>.workers.dev/parallel", "event_types": ["task_run.status"]}}'
+```
+
+On completion the worker fetches the run input (and result, for `completed` runs) with `PARALLEL_API_KEY` and forwards both to Poke. Non-terminal statuses are acknowledged with `202` and not forwarded.
+
 Example for Todoist. In the App Management Console, set the webhook callback URL to `https://<your-worker>.workers.dev/todoist` and subscribe to `reminder:fired`. Webhooks only fire for users who completed your app's OAuth flow — for personal use, run the OAuth flow manually once with your own account (see the [Todoist docs](https://developer.todoist.com/api/v1/#tag/Webhooks)). When a reminder fires, the worker fetches the task from the Todoist API using `TODOIST_API_TOKEN` and forwards it to Poke; tasks with the `ai` label are executed by Poke (which is instructed to mark them complete in Todoist afterwards), while the rest only trigger a warning to you.
 
 ## Add a new source
@@ -148,4 +164,4 @@ npm run deploy:preview # deploy the current branch's Worker Preview
 | `401` | Missing/invalid Svix signature headers |
 | `404` | Unknown source path |
 | `405` | Non-POST method |
-| `500` | `AGENTMAIL_WEBHOOK_SECRET` not configured |
+| `500` | A webhook secret or API token is not configured |
