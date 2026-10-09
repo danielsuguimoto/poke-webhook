@@ -9,20 +9,18 @@ const DEDUP_MAX_ENTRIES = 10_000;
 // deliveries up to 3 times with backoff, resending the same recording_id.
 const seenRecordings = new Map<string, number>();
 
-function isDuplicate(recordingId: string): boolean {
+function markSeen(recordingId: string): boolean {
   const now = Date.now();
   for (const [id, ts] of seenRecordings) {
     if (now - ts > DEDUP_TTL_MS) seenRecordings.delete(id);
   }
-  return seenRecordings.has(recordingId);
-}
-
-function markSeen(recordingId: string): void {
+  if (seenRecordings.has(recordingId)) return false;
   if (seenRecordings.size >= DEDUP_MAX_ENTRIES) {
     const oldest = seenRecordings.keys().next().value;
     if (oldest !== undefined) seenRecordings.delete(oldest);
   }
-  seenRecordings.set(recordingId, Date.now());
+  seenRecordings.set(recordingId, now);
+  return true;
 }
 
 export const ramble: SourceHandler = {
@@ -48,13 +46,18 @@ export const ramble: SourceHandler = {
     if (!recordingId) return json(400, { error: "invalid_payload" });
 
     const isTest = payload.test === true || recordingId.startsWith("test-");
-    if (!isTest && isDuplicate(recordingId)) return ignored("transcription.completed", recordingId);
+    // Claim the recording before awaiting the forward so a concurrent
+    // delivery of the same recording_id is deduplicated.
+    const claimed = isTest || markSeen(recordingId);
+    if (!claimed) return ignored("transcription.completed", recordingId);
 
     // Forward synchronously: on Poke failure we return 503 so Ramble retries,
-    // and the recording is only marked seen after a confirmed delivery.
+    // and the claim is released so the retry is not deduplicated.
     const delivered = await forwardToPoke(translate(payload, recordingId, isTest), env);
-    if (!delivered) return json(503, { error: "poke_forward_failed" });
-    if (!isTest) markSeen(recordingId);
+    if (!delivered) {
+      if (!isTest) seenRecordings.delete(recordingId);
+      return json(503, { error: "poke_forward_failed" });
+    }
     return accepted("transcription.completed", recordingId);
   },
 };
