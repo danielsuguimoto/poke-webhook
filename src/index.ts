@@ -6,6 +6,7 @@ import { circleback } from "./sources/circleback";
 import { goalApi } from "./sources/goal-api";
 import { parallel } from "./sources/parallel";
 import { pluggy } from "./sources/pluggy";
+import { ramble } from "./sources/ramble";
 import { tinyfish } from "./sources/tinyfish";
 import { todoist } from "./sources/todoist";
 
@@ -18,6 +19,7 @@ export interface Env {
   PARALLEL_WEBHOOK_SECRET: string;
   PARALLEL_API_KEY: string;
   PLUGGY_WEBHOOK_SECRET: string;
+  RAMBLE_WEBHOOK_SECRET: string;
   TODOIST_WEBHOOK_SECRET: string;
   TODOIST_API_TOKEN: string;
   TINYFISH_API_KEY: string;
@@ -41,6 +43,7 @@ const ROUTES: Record<string, SourceHandler> = {
   "/goal-api": goalApi,
   "/parallel": parallel,
   "/pluggy": pluggy,
+  "/ramble": ramble,
   "/tinyfish": tinyfish,
   "/todoist": todoist,
 };
