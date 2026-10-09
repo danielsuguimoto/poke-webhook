@@ -1,6 +1,7 @@
 import type { ExecutionContext } from "@cloudflare/workers-types";
 import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
+import { anakin } from "./sources/anakin";
 import { circleback } from "./sources/circleback";
 import { goalApi } from "./sources/goal-api";
 import { parallel } from "./sources/parallel";
@@ -11,6 +12,7 @@ import { todoist } from "./sources/todoist";
 export interface Env {
   POKE_API_KEY: string;
   AGENTMAIL_WEBHOOK_SECRET: string;
+  ANAKIN_WEBHOOK_SECRET: string;
   CIRCLEBACK_WEBHOOK_SECRET: string;
   GOAL_API_WEBHOOK_SECRET: string;
   PARALLEL_WEBHOOK_SECRET: string;
@@ -34,6 +36,7 @@ export interface SourceHandler {
 
 const ROUTES: Record<string, SourceHandler> = {
   "/agentmail": agentmail,
+  "/anakin": anakin,
   "/circleback": circleback,
   "/goal-api": goalApi,
   "/parallel": parallel,

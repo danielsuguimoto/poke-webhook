@@ -1,6 +1,7 @@
 const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const { agentmail } = require("../.test-build/sources/agentmail.js");
+const { anakin } = require("../.test-build/sources/anakin.js");
 const { circleback } = require("../.test-build/sources/circleback.js");
 const { goalApi } = require("../.test-build/sources/goal-api.js");
 const { parallel } = require("../.test-build/sources/parallel.js");
@@ -427,4 +428,82 @@ test("Parallel malformed run id returns 400 and unknown types are ignored", asyn
 
   const other = await parallel.handle({ type: "other.event", data: {} }, env, ctx);
   assert.equal(other.status, 202);
+});
+
+test("Anakin job.completed forwards job fields and inlined result", async (t) => {
+  const message = await forwardedMessage(t, anakin, {
+    id: "evt-anakin-1", type: "job.completed", createdAt: "2026-07-13T10:00:05Z",
+    data: {
+      jobId: "0b0e5e7e", jobType: "url_scraper", status: "completed",
+      url: "https://example.com", country: "us", creditsUsed: 1, durationMs: 5000,
+      createdAt: "2026-07-13T10:00:00Z", completedAt: "2026-07-13T10:00:05Z",
+      result_url: "https://api.anakin.io/v1/url-scraper/0b0e5e7e",
+      result: { markdown: "# Page content" },
+    },
+  });
+  assert.equal(message, [
+    "[Anakin] Job concluído (url_scraper):", "ID do job: 0b0e5e7e", "URL: https://example.com",
+    "País: us", "Créditos: 1", "Duração: 5000 ms",
+    "Criado em: 2026-07-13T10:00:00Z — Concluído em: 2026-07-13T10:00:05Z", "", "Resultado:",
+    JSON.stringify({ markdown: "# Page content" }, null, 2),
+    "URL do resultado: https://api.anakin.io/v1/url-scraper/0b0e5e7e",
+    "Evento criado em: 2026-07-13T10:00:05Z",
+  ].join("\n"));
+});
+
+test("Anakin monitor.change uses the flat payload without an envelope", async (t) => {
+  const message = await forwardedMessage(t, anakin, {
+    type: "monitor.change", monitorId: "mon-1", url: "https://example.com/product/123",
+    watchMode: "specific_data", changeId: "chg-1", changedAt: "2026-07-13T10:00:00Z",
+    changedFields: ["price"], summary: "The price dropped from $19.99 to $14.99.",
+    diff: { before: { price: 19.99 }, after: { price: 14.99 } },
+  });
+  assert.equal(message, [
+    "[Anakin] Monitor detectou uma mudança:", "URL: https://example.com/product/123",
+    "Monitor: mon-1", "Modo: specific_data", "Alterado em: 2026-07-13T10:00:00Z",
+    "Campos alterados: price", "Resumo: The price dropped from $19.99 to $14.99.", "", "Diff:",
+    JSON.stringify({ before: { price: 19.99 }, after: { price: 14.99 } }, null, 2),
+  ].join("\n"));
+});
+
+test("Anakin ai.search.completed lists per-source summaries", async (t) => {
+  const message = await forwardedMessage(t, anakin, {
+    id: "evt-anakin-2", type: "ai.search.completed", createdAt: "2026-07-15T12:03:41Z",
+    data: {
+      searchId: "3d9db7ff", query: "Best coding agents in 2026", status: "completed",
+      country: "us", creditsUsed: 3, completedAt: "2026-07-15T12:03:41Z",
+      sources: [
+        { source: "chatgpt", status: "completed", latencyMs: 9100, creditsUsed: 1, summary: "The leading coding agents in 2026 are…" },
+        { source: "google_ai_overview", status: "failed", latencyMs: 150000, creditsUsed: 0, error: "source timed out" },
+      ],
+      result_url: "https://api.anakin.io/v1/ai-visibility/search/3d9db7ff",
+    },
+  });
+  assert.equal(message, [
+    "[Anakin] Pesquisa de AI Visibility concluída:", "ID da pesquisa: 3d9db7ff",
+    "Consulta: Best coding agents in 2026", "País: us", "Créditos: 3",
+    "Concluída em: 2026-07-15T12:03:41Z", "", "Fontes:",
+    "- chatgpt: completed (9100 ms) — The leading coding agents in 2026 are…",
+    "- google_ai_overview: failed (150000 ms) — source timed out",
+    "URL do resultado: https://api.anakin.io/v1/ai-visibility/search/3d9db7ff",
+    "Evento criado em: 2026-07-15T12:03:41Z",
+  ].join("\n"));
+});
+
+test("Anakin duplicate deliveries and unknown types are ignored", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => Response.json({}));
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = { id: "evt-anakin-3", type: "webhook.test", data: { endpointId: "ep-1", message: "test" } };
+
+  const first = await anakin.handle(payload, env, ctx);
+  assert.equal(first.status, 200);
+  const second = await anakin.handle({ ...payload }, env, ctx);
+  assert.equal(second.status, 202);
+
+  const other = await anakin.handle({ id: "evt-anakin-4", type: "future.event", data: {} }, env, ctx);
+  assert.equal(other.status, 202);
+
+  const bad = await anakin.handle({ data: {} }, env, ctx);
+  assert.equal(bad.status, 400);
 });
