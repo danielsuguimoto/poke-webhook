@@ -7,6 +7,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | Path         | Source    | Events |
 |--------------|-----------|--------|
 | `POST /agentmail` | [AgentMail](https://docs.agentmail.to/webhooks-overview) | `message.received`, `message.sent`, `message.delivered` |
+| `POST /anakin` | [Anakin](https://anakin.io/docs/api-reference/webhooks) | `job.*`, `batch.*`, `wire.job.*`, `monitor.change`, `ai.search.*`, `webhook.test` — deliveries are deduplicated by event id (`changeId` for `monitor.change`) |
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
 | `POST /goal-api` | [GOAL API](https://goal-api.com/documentation#webhooks) | `match.started`, `match.finished`, `goal.scored`, `score.changed`, `match.status_changed` — the full payload is forwarded as JSON |
 | `POST /parallel` | [Parallel](https://docs.parallel.ai/task-api/webhooks) | `task_run.status` — the run input is fetched via `GET /v1/tasks/runs/{run_id}/input` and the result via `GET /v1/tasks/runs/{run_id}/result` (completed runs) and forwarded |
@@ -42,6 +43,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 |--------|-------------|
 | `POKE_API_KEY` | V2 Poke API key from [Kitchen](https://poke.com/kitchen) |
 | `AGENTMAIL_WEBHOOK_SECRET` | AgentMail webhook signing secret (`whsec_...`), from `agentmail webhooks get` or the AgentMail console |
+| `ANAKIN_WEBHOOK_SECRET` | Anakin webhook signing secret (`whsec_...`) — the endpoint secret or the default signing secret, from Account → Webhooks; verifies `X-Anakin-Signature` |
 | `CIRCLEBACK_WEBHOOK_SECRET` | Circleback webhook signing secret, provided when configuring a webhook automation |
 | `GOAL_API_WEBHOOK_SECRET` | GOAL API endpoint signing secret, shown once when creating a webhook endpoint in the [dashboard](https://goal-api.com/dashboard/webhooks); verifies `X-Goal-Signature` |
 | `PARALLEL_WEBHOOK_SECRET` | Parallel account webhook secret (`whsec_...`), from Settings → Webhooks on [platform.parallel.ai](https://platform.parallel.ai); verifies `webhook-signature` (Standard Webhooks) |
@@ -54,6 +56,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 ```
 wrangler secret put POKE_API_KEY
 wrangler secret put AGENTMAIL_WEBHOOK_SECRET
+wrangler secret put ANAKIN_WEBHOOK_SECRET
 wrangler secret put CIRCLEBACK_WEBHOOK_SECRET
 wrangler secret put GOAL_API_WEBHOOK_SECRET
 wrangler secret put PARALLEL_WEBHOOK_SECRET
