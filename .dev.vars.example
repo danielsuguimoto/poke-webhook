@@ -9,3 +9,4 @@ PLUGGY_WEBHOOK_SECRET=your-pluggy-shared-secret
 TODOIST_WEBHOOK_SECRET=your-todoist-client-secret
 TODOIST_API_TOKEN=your-todoist-api-token
 TINYFISH_API_KEY=your-tinyfish-api-key
+RAMBLE_WEBHOOK_SECRET=your-ramble-signing-secret

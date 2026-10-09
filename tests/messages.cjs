@@ -6,6 +6,7 @@ const { circleback } = require("../.test-build/sources/circleback.js");
 const { goalApi } = require("../.test-build/sources/goal-api.js");
 const { parallel } = require("../.test-build/sources/parallel.js");
 const { pluggy } = require("../.test-build/sources/pluggy.js");
+const { ramble } = require("../.test-build/sources/ramble.js");
 const { todoist } = require("../.test-build/sources/todoist.js");
 
 async function forwardedMessage(t, source, payload, task) {
@@ -506,4 +507,169 @@ test("Anakin duplicate deliveries and unknown types are ignored", async (t) => {
 
   const bad = await anakin.handle({ data: {} }, env, ctx);
   assert.equal(bad.status, 400);
+});
+
+test("Ramble forwards recording metadata and transcript, preserving source content", async (t) => {
+  const message = await forwardedMessage(t, ramble, {
+    recording_id: "550e8400-e29b-41d4-a716-446655440000",
+    created_at: "2026-03-17T13:19:00Z",
+    duration: 138.5,
+    transcription: "Just had a great idea for the landing page.\nKeep this in English.",
+    device_id: "7a2b3c4d-5e6f-7890-abcd-ef1234567890",
+  });
+  assert.equal(message, [
+    "[Ramble] Nova transcrição recebida:",
+    "ID da gravação: 550e8400-e29b-41d4-a716-446655440000",
+    "Data e hora: 2026-03-17T13:19:00Z",
+    "Duração: 138.5 s",
+    "Dispositivo: 7a2b3c4d-5e6f-7890-abcd-ef1234567890",
+    "", "Transcrição:", "Just had a great idea for the landing page.\nKeep this in English.",
+  ].join("\n"));
+});
+
+test("Ramble test payload is always forwarded with a test header", async (t) => {
+  const payload = {
+    recording_id: "test-550e8400-e29b-41d4-a716-446655440000",
+    created_at: "2026-04-09T12:00:00Z",
+    duration: 0,
+    transcription: "This is a test webhook from Ramble.",
+    device_id: "7a2b3c4d-5e6f-7890-abcd-ef1234567890",
+    test: true,
+  };
+  for (let i = 0; i < 2; i++) {
+    const message = await forwardedMessage(t, ramble, payload);
+    assert.equal(message, [
+      "[Ramble] Webhook de teste recebido:",
+      "ID da gravação: test-550e8400-e29b-41d4-a716-446655440000",
+      "Data e hora: 2026-04-09T12:00:00Z",
+      "Duração: 0.0 s",
+      "Dispositivo: 7a2b3c4d-5e6f-7890-abcd-ef1234567890",
+      "", "Transcrição:", "This is a test webhook from Ramble.",
+    ].join("\n"));
+  }
+});
+
+test("Ramble missing fields use Portuguese fallbacks", async (t) => {
+  const message = await forwardedMessage(t, ramble, { recording_id: "rec-fallback-1" });
+  assert.equal(message, [
+    "[Ramble] Nova transcrição recebida:",
+    "ID da gravação: rec-fallback-1",
+    "Data e hora: não informadas",
+    "", "Transcrição:", "(sem conteúdo)",
+  ].join("\n"));
+});
+
+test("Ramble rejects payloads without recording_id", async () => {
+  for (const payload of [null, {}, { recording_id: 42 }, { transcription: "hi" }, "text", 42]) {
+    const res = await ramble.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, "invalid_payload");
+  }
+});
+
+test("Ramble returns 503 when forwarding fails and redelivers on retry", async (t) => {
+  const calls = [];
+  let pokeOk = false;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push(url);
+    return pokeOk ? Response.json({}) : new Response("boom", { status: 500 });
+  });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = { recording_id: "rec-retry-1", transcription: "retry me" };
+
+  const first = await ramble.handle(structuredClone(payload), env, ctx);
+  assert.equal(first.status, 503);
+  assert.equal((await first.json()).error, "poke_forward_failed");
+
+  pokeOk = true;
+  const second = await ramble.handle(structuredClone(payload), env, ctx);
+  assert.equal(second.status, 200);
+  const third = await ramble.handle(structuredClone(payload), env, ctx);
+  assert.equal(third.status, 202);
+  assert.equal(calls.length, 2);
+});
+
+test("Ramble concurrent deliveries share the in-flight forward outcome", async (t) => {
+  const calls = [];
+  let resolvePoke;
+  t.mock.method(globalThis, "fetch", async (url) => {
+    calls.push(url);
+    return new Promise((resolve) => { resolvePoke = () => resolve(Response.json({})); });
+  });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = { recording_id: "rec-concurrent-1", transcription: "hi" };
+
+  const first = ramble.handle(structuredClone(payload), env, ctx);
+  const second = ramble.handle(structuredClone(payload), env, ctx);
+  // Let the second delivery observe the in-flight forward, then finish it.
+  await new Promise((r) => setImmediate(r));
+  resolvePoke();
+
+  const [firstRes, secondRes] = await Promise.all([first, second]);
+  assert.equal(firstRes.status, 200);
+  assert.equal(secondRes.status, 202);
+  assert.equal(calls.length, 1);
+});
+
+test("Ramble deduplicates retried deliveries by recording_id", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({});
+  });
+  const pending = [];
+  const ctx = { waitUntil: (p) => pending.push(p) };
+  const payload = { recording_id: "rec-dup-1", transcription: "dup" };
+  const env = { POKE_API_KEY: "k" };
+
+  const first = await ramble.handle(structuredClone(payload), env, ctx);
+  const second = await ramble.handle(structuredClone(payload), env, ctx);
+  const third = await ramble.handle(structuredClone(payload), env, ctx);
+  await Promise.all(pending);
+
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 202);
+  assert.equal(third.status, 202);
+  assert.equal(calls.length, 1);
+});
+
+async function rambleSignature(secret, body) {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(body));
+  return "sha256=" + [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function rambleAuthRequest(signature) {
+  return new Request("https://worker.test/ramble", {
+    method: "POST",
+    headers: signature ? { "x-webhook-signature": signature } : {},
+  });
+}
+
+test("Ramble authorize verifies the X-Webhook-Signature HMAC", async () => {
+  const body = JSON.stringify({ recording_id: "rec-1", transcription: "hi" });
+  const env = { RAMBLE_WEBHOOK_SECRET: "ramble-secret" };
+
+  assert.equal(await ramble.authorize(body, rambleAuthRequest(await rambleSignature("ramble-secret", body)), env), null);
+
+  for (const [sig, expected] of [
+    [null, "missing_signature_header"],
+    ["sha256=deadbeef", "invalid_signature"],
+    [await rambleSignature("other-secret", body), "invalid_signature"],
+    [await rambleSignature("ramble-secret", body + " "), "invalid_signature"],
+  ]) {
+    const res = await ramble.authorize(body, rambleAuthRequest(sig), env);
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, expected);
+  }
+});
+
+test("Ramble authorize fails closed when the secret is not configured", async () => {
+  const res = await ramble.authorize("{}", rambleAuthRequest("sha256=x"), {});
+  assert.equal(res.status, 500);
+  assert.equal((await res.json()).error, "missing_webhook_secret");
 });
