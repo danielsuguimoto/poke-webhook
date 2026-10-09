@@ -590,6 +590,29 @@ test("Ramble returns 503 when forwarding fails and redelivers on retry", async (
   assert.equal(calls.length, 2);
 });
 
+test("Ramble concurrent deliveries share the in-flight forward outcome", async (t) => {
+  const calls = [];
+  let resolvePoke;
+  t.mock.method(globalThis, "fetch", async (url) => {
+    calls.push(url);
+    return new Promise((resolve) => { resolvePoke = () => resolve(Response.json({})); });
+  });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = { recording_id: "rec-concurrent-1", transcription: "hi" };
+
+  const first = ramble.handle(structuredClone(payload), env, ctx);
+  const second = ramble.handle(structuredClone(payload), env, ctx);
+  // Let the second delivery observe the in-flight forward, then finish it.
+  await new Promise((r) => setImmediate(r));
+  resolvePoke();
+
+  const [firstRes, secondRes] = await Promise.all([first, second]);
+  assert.equal(firstRes.status, 200);
+  assert.equal(secondRes.status, 202);
+  assert.equal(calls.length, 1);
+});
+
 test("Ramble deduplicates retried deliveries by recording_id", async (t) => {
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {

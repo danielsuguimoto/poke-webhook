@@ -8,6 +8,9 @@ const DEDUP_MAX_ENTRIES = 10_000;
 // Best-effort deduplication within a worker isolate: Ramble retries failed
 // deliveries up to 3 times with backoff, resending the same recording_id.
 const seenRecordings = new Map<string, number>();
+// recording_id -> in-flight forward, so concurrent duplicate deliveries
+// share the first attempt's outcome instead of being acknowledged early.
+const inFlight = new Map<string, Promise<boolean>>();
 
 function markSeen(recordingId: string): boolean {
   const now = Date.now();
@@ -46,18 +49,32 @@ export const ramble: SourceHandler = {
     if (!recordingId) return json(400, { error: "invalid_payload" });
 
     const isTest = payload.test === true || recordingId.startsWith("test-");
-    // Claim the recording before awaiting the forward so a concurrent
-    // delivery of the same recording_id is deduplicated.
-    const claimed = isTest || markSeen(recordingId);
-    if (!claimed) return ignored("transcription.completed", recordingId);
 
+    if (!isTest) {
+      const pending = inFlight.get(recordingId);
+      if (pending) {
+        // A delivery of this recording is already forwarding: report its
+        // outcome — 202 once delivered, 503 so Ramble retries when it failed.
+        const delivered = await pending;
+        return delivered
+          ? ignored("transcription.completed", recordingId)
+          : json(503, { error: "poke_forward_failed" });
+      }
+      // Claim the recording before awaiting the forward so concurrent and
+      // retried deliveries are deduplicated.
+      if (!markSeen(recordingId)) return ignored("transcription.completed", recordingId);
+    }
+
+    const forward = forwardToPoke(translate(payload, recordingId, isTest), env);
+    if (!isTest) inFlight.set(recordingId, forward);
     // Forward synchronously: on Poke failure we return 503 so Ramble retries,
     // and the claim is released so the retry is not deduplicated.
-    const delivered = await forwardToPoke(translate(payload, recordingId, isTest), env);
-    if (!delivered) {
-      if (!isTest) seenRecordings.delete(recordingId);
-      return json(503, { error: "poke_forward_failed" });
+    const delivered = await forward;
+    if (!isTest) {
+      inFlight.delete(recordingId);
+      if (!delivered) seenRecordings.delete(recordingId);
     }
+    if (!delivered) return json(503, { error: "poke_forward_failed" });
     return accepted("transcription.completed", recordingId);
   },
 };
