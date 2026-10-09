@@ -9,18 +9,20 @@ const DEDUP_MAX_ENTRIES = 10_000;
 // deliveries up to 3 times with backoff, resending the same recording_id.
 const seenRecordings = new Map<string, number>();
 
-function markSeen(recordingId: string): boolean {
+function isDuplicate(recordingId: string): boolean {
   const now = Date.now();
   for (const [id, ts] of seenRecordings) {
     if (now - ts > DEDUP_TTL_MS) seenRecordings.delete(id);
   }
-  if (seenRecordings.has(recordingId)) return false;
+  return seenRecordings.has(recordingId);
+}
+
+function markSeen(recordingId: string): void {
   if (seenRecordings.size >= DEDUP_MAX_ENTRIES) {
     const oldest = seenRecordings.keys().next().value;
     if (oldest !== undefined) seenRecordings.delete(oldest);
   }
-  seenRecordings.set(recordingId, now);
-  return true;
+  seenRecordings.set(recordingId, Date.now());
 }
 
 export const ramble: SourceHandler = {
@@ -38,14 +40,21 @@ export const ramble: SourceHandler = {
     return null;
   },
 
-  async handle(payload, env, ctx): Promise<Response> {
+  async handle(payload, env, _ctx): Promise<Response> {
+    if (!payload || typeof payload !== "object") {
+      return json(400, { error: "invalid_payload" });
+    }
     const recordingId = typeof payload.recording_id === "string" ? payload.recording_id : "";
     if (!recordingId) return json(400, { error: "invalid_payload" });
 
     const isTest = payload.test === true || recordingId.startsWith("test-");
-    if (!isTest && !markSeen(recordingId)) return ignored("transcription.completed", recordingId);
+    if (!isTest && isDuplicate(recordingId)) return ignored("transcription.completed", recordingId);
 
-    ctx.waitUntil(forwardToPoke(translate(payload, recordingId, isTest), env));
+    // Forward synchronously: on Poke failure we return 503 so Ramble retries,
+    // and the recording is only marked seen after a confirmed delivery.
+    const delivered = await forwardToPoke(translate(payload, recordingId, isTest), env);
+    if (!delivered) return json(503, { error: "poke_forward_failed" });
+    if (!isTest) markSeen(recordingId);
     return accepted("transcription.completed", recordingId);
   },
 };

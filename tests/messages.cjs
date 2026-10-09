@@ -560,11 +560,34 @@ test("Ramble missing fields use Portuguese fallbacks", async (t) => {
 });
 
 test("Ramble rejects payloads without recording_id", async () => {
-  for (const payload of [{}, { recording_id: 42 }, { transcription: "hi" }]) {
+  for (const payload of [null, {}, { recording_id: 42 }, { transcription: "hi" }, "text", 42]) {
     const res = await ramble.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
     assert.equal(res.status, 400);
     assert.equal((await res.json()).error, "invalid_payload");
   }
+});
+
+test("Ramble returns 503 when forwarding fails and redelivers on retry", async (t) => {
+  const calls = [];
+  let pokeOk = false;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push(url);
+    return pokeOk ? Response.json({}) : new Response("boom", { status: 500 });
+  });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = { recording_id: "rec-retry-1", transcription: "retry me" };
+
+  const first = await ramble.handle(structuredClone(payload), env, ctx);
+  assert.equal(first.status, 503);
+  assert.equal((await first.json()).error, "poke_forward_failed");
+
+  pokeOk = true;
+  const second = await ramble.handle(structuredClone(payload), env, ctx);
+  assert.equal(second.status, 200);
+  const third = await ramble.handle(structuredClone(payload), env, ctx);
+  assert.equal(third.status, 202);
+  assert.equal(calls.length, 2);
 });
 
 test("Ramble deduplicates retried deliveries by recording_id", async (t) => {
