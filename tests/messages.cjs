@@ -86,6 +86,147 @@ test("AgentMail missing content uses Portuguese fallbacks", async (t) => {
   ].join("\n"));
 });
 
+for (const [eventType, header] of [
+  ["message.received.spam", "E-mail recebido classificado como spam"],
+  ["message.received.blocked", "E-mail recebido bloqueado pela lista de bloqueio"],
+  ["message.received.unauthenticated", "E-mail recebido sem autenticação"],
+]) {
+  test(`AgentMail ${eventType} uses the received shape with its own header`, async (t) => {
+    const message = await forwardedMessage(t, agentmail, {
+      event_type: eventType, event_id: "evt-1",
+      message: {
+        from: "sender@example.com", to: ["agent@example.com"], subject: "Offer",
+        text: "Body stays as-is.", timestamp: "2026-10-01T10:00:00Z", thread_id: "thread-1",
+      },
+    });
+    assert.equal(message, [
+      `[AgentMail] ${header} na sua caixa de entrada do AgentMail agent@example.com:`,
+      "De: sender@example.com", "Para: agent@example.com", "Assunto: Offer",
+      "Data e hora: 2026-10-01T10:00:00Z", "Conversa: thread-1", "", "Body stays as-is.",
+    ].join("\n"));
+  });
+}
+
+test("AgentMail message.bounced reports bounce type and recipient statuses", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "message.bounced", event_id: "evt-1",
+    bounce: {
+      inbox_id: "inbox-1", thread_id: "thread-1", timestamp: "2026-10-01T10:07:00Z",
+      type: "Permanent", sub_type: "General",
+      recipients: [{ address: "invalid@example.com", status: "bounced" }, "other@example.com"],
+    },
+  });
+  assert.equal(message, [
+    "[AgentMail] O e-mail enviado pela sua caixa de entrada do AgentMail inbox-1 foi devolvido (bounce):",
+    "Tipo: Permanent — General", "Destinatários: invalid@example.com (bounced), other@example.com",
+    "Conversa: thread-1", "Data e hora: 2026-10-01T10:07:00Z",
+  ].join("\n"));
+});
+
+test("AgentMail message.complained reports complaint details", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "message.complained", event_id: "evt-1",
+    complaint: {
+      inbox_id: "inbox-1", thread_id: "thread-1", timestamp: "2026-10-01T10:08:00Z",
+      type: "abuse", sub_type: "spam", recipients: ["complainer@example.com"],
+    },
+  });
+  assert.equal(message, [
+    "[AgentMail] Um destinatário marcou como spam o e-mail enviado pela sua caixa de entrada do AgentMail inbox-1:",
+    "Tipo: abuse — spam", "Destinatários: complainer@example.com",
+    "Conversa: thread-1", "Data e hora: 2026-10-01T10:08:00Z",
+  ].join("\n"));
+});
+
+test("AgentMail message.rejected reports the rejection reason", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "message.rejected", event_id: "evt-1",
+    reject: {
+      inbox_id: "inbox-1", thread_id: "thread-1", timestamp: "2026-10-01T10:09:00Z",
+      reason: "Invalid recipient address",
+    },
+  });
+  assert.equal(message, [
+    "[AgentMail] O e-mail da sua caixa de entrada do AgentMail inbox-1 foi rejeitado antes do envio:",
+    "Motivo: Invalid recipient address", "Conversa: thread-1", "Data e hora: 2026-10-01T10:09:00Z",
+  ].join("\n"));
+});
+
+test("AgentMail message.opened reports the first open", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "message.opened", event_id: "evt-1",
+    open: { inbox_id: "inbox-1", thread_id: "thread-1", timestamp: "2026-10-01T10:15:00Z" },
+  });
+  assert.equal(message, [
+    "[AgentMail] O e-mail enviado pela sua caixa de entrada do AgentMail inbox-1 foi aberto pela primeira vez:",
+    "Conversa: thread-1", "Data e hora: 2026-10-01T10:15:00Z",
+  ].join("\n"));
+});
+
+test("AgentMail message.security.completed reports the Agent Armor verdict", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "message.security.completed", event_id: "evt-1",
+    message: {
+      inbox_id: "inbox-1", message_id: "<abc123@agentmail.to>",
+      agent_armor: {
+        status: "complete", verdict: "review",
+        reason: "The message asks the agent to ignore its instructions.",
+        completed_at: "2026-10-01T10:00:04Z",
+      },
+    },
+  });
+  assert.equal(message, [
+    "[AgentMail] O Agent Armor concluiu a análise de um e-mail recebido na sua caixa de entrada do AgentMail inbox-1:",
+    "Veredito: review", "Motivo: The message asks the agent to ignore its instructions.",
+    "Mensagem: <abc123@agentmail.to>", "Data e hora: 2026-10-01T10:00:04Z",
+  ].join("\n"));
+});
+
+test("AgentMail domain.verified reports the verified domain", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "domain.verified", event_id: "evt-1",
+    domain: { domain_id: "dom_123abc", status: "verified", updated_at: "2026-10-01T10:00:00Z" },
+  });
+  assert.equal(message, [
+    "[AgentMail] O domínio dom_123abc foi verificado com sucesso:",
+    "Status: verified", "Data e hora: 2026-10-01T10:00:00Z",
+  ].join("\n"));
+});
+
+for (const [eventType, action] of [
+  ["calendar.event.created", "criado"],
+  ["calendar.event.starting", "iniciado"],
+  ["calendar.event.ending", "encerrado"],
+]) {
+  test(`AgentMail ${eventType} reports the calendar event`, async (t) => {
+    const message = await forwardedMessage(t, agentmail, {
+      event_type: eventType, event_id: "evt-1", inbox_id: "scheduler@agentmail.to",
+      calendar_event: {
+        event_id: "cal-1", title: "Intro call with Acme", location: "https://meet.example.com/acme",
+        start_at: "2026-10-15T18:00:00Z", end_at: "2026-10-15T18:30:00Z",
+      },
+      scheduled_at: "2026-10-15T18:00:00Z",
+    });
+    assert.equal(message, [
+      `[AgentMail] Um evento de calendário foi ${action} na sua caixa de entrada do AgentMail scheduler@agentmail.to:`,
+      "Evento: Intro call with Acme", "Local: https://meet.example.com/acme",
+      "Início: 2026-10-15T18:00:00Z", "Fim: 2026-10-15T18:30:00Z", "Data e hora: 2026-10-15T18:00:00Z",
+    ].join("\n"));
+  });
+}
+
+test("AgentMail ignores unsupported event types without forwarding", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => { calls.push(url); return Response.json({}); });
+  const res = await agentmail.handle(
+    { event_type: "message.unknown", event_id: "evt-1" },
+    { POKE_API_KEY: "k" },
+    { waitUntil: () => {} },
+  );
+  assert.equal(res.status, 202);
+  assert.equal(calls.length, 0);
+});
+
 test("Circleback translates sections and derived statuses, preserving meeting content", async (t) => {
   const message = await forwardedMessage(t, circleback, {
     id: "meeting-1", name: "Weekly review", createdAt: "2026-10-01T10:00:00Z", duration: 120,
