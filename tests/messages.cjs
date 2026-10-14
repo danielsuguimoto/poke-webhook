@@ -102,7 +102,7 @@ for (const [eventType, header] of [
     assert.equal(message, [
       `[AgentMail] ${header} na sua caixa de entrada do AgentMail agent@example.com:`,
       "De: sender@example.com", "Para: agent@example.com", "Assunto: Offer",
-      "Data e hora: 2026-10-01T10:00:00Z", "Conversa: thread-1", "", "Body stays as-is.",
+      "Data e hora: 2026-10-01T10:00:00Z", "Conversa: thread-1", "", "(conteúdo omitido por segurança)",
     ].join("\n"));
   });
 }
@@ -190,6 +190,23 @@ test("AgentMail domain.verified reports the verified domain", async (t) => {
   assert.equal(message, [
     "[AgentMail] O domínio dom_123abc foi verificado com sucesso:",
     "Status: verified", "Data e hora: 2026-10-01T10:00:00Z",
+  ].join("\n"));
+});
+
+test("AgentMail calendar.event.responded lists attendee answers and cancelled status", async (t) => {
+  const message = await forwardedMessage(t, agentmail, {
+    event_type: "calendar.event.responded", event_id: "evt-1", inbox_id: "scheduler@agentmail.to",
+    calendar_event: {
+      event_id: "cal-1", title: "Intro call with Acme", status: "cancelled",
+      start_at: "2026-10-15T18:00:00Z", end_at: "2026-10-15T18:30:00Z",
+      attendees: [{ email: "jane@acme.com", name: "Jane Doe", status: "declined" }],
+    },
+    scheduled_at: "2026-10-15T18:00:00Z",
+  });
+  assert.equal(message, [
+    "[AgentMail] Um evento de calendário foi respondido na sua caixa de entrada do AgentMail scheduler@agentmail.to:",
+    "Evento: Intro call with Acme", "Status: cancelled", "Participante: Jane Doe <jane@acme.com> (declined)",
+    "Início: 2026-10-15T18:00:00Z", "Fim: 2026-10-15T18:30:00Z", "Data e hora: 2026-10-15T18:00:00Z",
   ].join("\n"));
 });
 

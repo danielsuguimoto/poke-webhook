@@ -81,7 +81,7 @@ export const agentmail: SourceHandler = {
 
 function translate(eventType: string, payload: Record<string, unknown>): string | null {
   const receivedHeader = RECEIVED_HEADERS[eventType];
-  if (receivedHeader) return translateReceived(payload, receivedHeader);
+  if (receivedHeader) return translateReceived(payload, receivedHeader, eventType === "message.received");
   if (eventType === "message.sent") return translateSent(payload);
   if (eventType === "message.delivered") return translateDelivered(payload);
   if (eventType === "message.bounced") return translateBounced(payload);
@@ -109,7 +109,7 @@ interface ReceivedMessage {
   timestamp?: string;
 }
 
-function translateReceived(payload: Record<string, unknown>, header: string): string | null {
+function translateReceived(payload: Record<string, unknown>, header: string, trusted: boolean): string | null {
   const msg = (payload.message ?? {}) as ReceivedMessage;
   if (!msg || typeof msg !== "object") return null;
 
@@ -117,7 +117,11 @@ function translateReceived(payload: Record<string, unknown>, header: string): st
   const to = toList.join(", ");
   const inboxEmail = toList[0] ?? msg.inbox_id ?? "não informada";
   const cc = msg.cc && msg.cc.length ? `\nCc: ${msg.cc.join(", ")}` : "";
-  const body = msg.text || msg.preview || stripHtml(msg.html) || "(sem conteúdo)";
+  // Flagged messages (spam/blocked/unauthenticated) can carry hostile
+  // instructions, so their content is never forwarded to the agent.
+  const body = trusted
+    ? msg.text || msg.preview || stripHtml(msg.html) || "(sem conteúdo)"
+    : "(conteúdo omitido por segurança)";
   const lines = [
     `[AgentMail] ${header} na sua caixa de entrada do AgentMail ${inboxEmail}:`,
     `De: ${msg.from ?? "não informado"}`,
@@ -281,12 +285,29 @@ function translateDomainVerified(payload: Record<string, unknown>): string | nul
   ].join("\n");
 }
 
+interface CalendarAttendee {
+  email?: string;
+  name?: string;
+  status?: string;
+}
+
 interface CalendarEvent {
   event_id?: string;
   title?: string;
   location?: string;
+  status?: string;
   start_at?: string;
   end_at?: string;
+  attendees?: CalendarAttendee[];
+}
+
+function attendeeList(attendees: CalendarAttendee[] | undefined): string[] {
+  return (attendees ?? [])
+    .filter((a) => a && typeof a === "object")
+    .map((a) => {
+      const name = a.name && a.email ? `${a.name} <${a.email}>` : (a.name ?? a.email ?? "não informado");
+      return a.status ? `${name} (${a.status})` : name;
+    });
 }
 
 function translateCalendarEvent(payload: Record<string, unknown>, action: string): string | null {
@@ -297,7 +318,9 @@ function translateCalendarEvent(payload: Record<string, unknown>, action: string
   return [
     `[AgentMail] Um evento de calendário foi ${action} na sua caixa de entrada do AgentMail ${inboxId}:`,
     `Evento: ${event.title ?? "sem título"}`,
+    ...(event.status ? [`Status: ${event.status}`] : []),
     ...(event.location ? [`Local: ${event.location}`] : []),
+    ...attendeeList(event.attendees).map((a) => `Participante: ${a}`),
     `Início: ${event.start_at ?? "não informado"}`,
     `Fim: ${event.end_at ?? "não informado"}`,
     `Data e hora: ${scheduledAt}`,
