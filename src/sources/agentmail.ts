@@ -118,10 +118,19 @@ function translateReceived(payload: Record<string, unknown>, header: string, tru
   const inboxEmail = toList[0] ?? msg.inbox_id ?? "não informada";
   const cc = msg.cc && msg.cc.length ? `\nCc: ${msg.cc.join(", ")}` : "";
   // Flagged messages (spam/blocked/unauthenticated) can carry hostile
-  // instructions, so their content is never forwarded to the agent.
-  const body = trusted
-    ? msg.text || msg.preview || stripHtml(msg.html) || "(sem conteúdo)"
-    : "(conteúdo omitido por segurança)";
+  // instructions in any sender-controlled field, so only our own inbox
+  // addressing and timestamps are forwarded — never content or identities.
+  if (!trusted) {
+    return [
+      `[AgentMail] ${header} na sua caixa de entrada do AgentMail ${inboxEmail}:`,
+      `Para: ${to || "não informado"}`,
+      `Data e hora: ${msg.timestamp ?? "não informadas"}`,
+      `Conversa: ${msg.thread_id ?? "?"}`,
+      "",
+      "(conteúdo omitido por segurança)",
+    ].join("\n");
+  }
+  const body = msg.text || msg.preview || stripHtml(msg.html) || "(sem conteúdo)";
   const lines = [
     `[AgentMail] ${header} na sua caixa de entrada do AgentMail ${inboxEmail}:`,
     `De: ${msg.from ?? "não informado"}`,

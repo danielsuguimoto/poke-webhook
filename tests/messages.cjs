@@ -101,7 +101,7 @@ for (const [eventType, header] of [
     });
     assert.equal(message, [
       `[AgentMail] ${header} na sua caixa de entrada do AgentMail agent@example.com:`,
-      "De: sender@example.com", "Para: agent@example.com", "Assunto: Offer",
+      "Para: agent@example.com",
       "Data e hora: 2026-10-01T10:00:00Z", "Conversa: thread-1", "", "(conteúdo omitido por segurança)",
     ].join("\n"));
   });
