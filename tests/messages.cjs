@@ -999,6 +999,16 @@ test("Composio forwards Slack channel messages that mention the configured user"
   assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
 });
 
+test("Composio forwards channel mentions in the <@ID|label> form", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-chan-label",
+    metadata: { log_id: "log-chan-label", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+    data: { channel_type: "channel", text: "hey <@U01D45GTXRB|daniel> look" },
+  });
+  assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
+});
+
 test("Composio forwards non-Slack channel events regardless of mentions", async (t) => {
   const message = await forwardedMessage(t, composio, {
     ...COMPOSIO_SLACK_CHANNEL_EVENT,

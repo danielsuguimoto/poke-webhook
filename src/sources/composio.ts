@@ -159,7 +159,11 @@ function containsMention(data: Record<string, unknown>, userId: string): boolean
 }
 
 function containsUserId(value: unknown, userId: string): boolean {
-  if (typeof value === "string") return value === userId || value.includes(`<@${userId}>`);
+  if (typeof value === "string") {
+    return value === userId
+      || value.includes(`<@${userId}>`)
+      || value.includes(`<@${userId}|`);
+  }
   if (Array.isArray(value)) return value.some((v) => containsUserId(v, userId));
   if (value && typeof value === "object") {
     for (const nested of Object.values(value)) {
