@@ -151,21 +151,35 @@ function isChannelMessageTrigger(triggerSlug: string, data: Record<string, unkno
 }
 
 // Matches the `<@U...>` mention form in message text as well as `user`/`user_id`
-// fields in rich_text blocks. The top-level `user`/`user_id` sender fields are
-// excluded so messages the configured user posts are not treated as mentions.
+// fields in rich_text blocks, plus the `<!here>`/`<!channel>` broadcast mentions
+// (text form and `broadcast` rich_text elements). The top-level `user`/`user_id`
+// sender fields are excluded so messages the configured user posts are not
+// treated as mentions.
 function containsMention(data: Record<string, unknown>, userId: string): boolean {
   const { user: _user, user_id: _userId, ...rest } = data;
   return containsUserId(rest, userId);
 }
 
+const BROADCAST_MENTIONS = ["here", "channel"] as const;
+
 function containsUserId(value: unknown, userId: string): boolean {
   if (typeof value === "string") {
     return value === userId
       || value.includes(`<@${userId}>`)
-      || value.includes(`<@${userId}|`);
+      || value.includes(`<@${userId}|`)
+      || BROADCAST_MENTIONS.some(
+        (mention) => value.includes(`<!${mention}>`) || value.includes(`<!${mention}|`),
+      );
   }
   if (Array.isArray(value)) return value.some((v) => containsUserId(v, userId));
   if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (
+      record.type === "broadcast"
+      && BROADCAST_MENTIONS.some((mention) => record.range === mention)
+    ) {
+      return true;
+    }
     for (const nested of Object.values(value)) {
       if (containsUserId(nested, userId)) return true;
     }
