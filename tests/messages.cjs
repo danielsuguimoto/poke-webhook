@@ -831,3 +831,147 @@ test("Ramble authorize fails closed when the secret is not configured", async ()
   assert.equal(res.status, 500);
   assert.equal((await res.json()).error, "missing_webhook_secret");
 });
+
+const { composio } = require("../.test-build/sources/composio.js");
+
+const COMPOSIO_EVENT = {
+  id: "evt-comp-1",
+  type: "composio.trigger.message",
+  metadata: {
+    log_id: "log-1",
+    trigger_slug: "GMAIL_NEW_GMAIL_MESSAGE",
+    trigger_id: "trg-1",
+    connected_account_id: "ca-1",
+    auth_config_id: "ac-1",
+    user_id: "user-1",
+  },
+  data: { subject: "Deploy finished", sender: "ci@example.com" },
+  timestamp: "2026-10-16T12:00:00Z",
+};
+
+test("Composio forwards trigger slug, metadata and data, preserving source content", async (t) => {
+  const message = await forwardedMessage(t, composio, COMPOSIO_EVENT);
+  assert.equal(message, [
+    "[Composio] Novo evento do gatilho GMAIL_NEW_GMAIL_MESSAGE:",
+    "ID do evento: evt-comp-1",
+    "Gatilho: trg-1",
+    "Conta conectada: ca-1",
+    "Data e hora: 2026-10-16T12:00:00Z",
+    "", "Dados:",
+    JSON.stringify({ subject: "Deploy finished", sender: "ci@example.com" }, null, 2),
+  ].join("\n"));
+});
+
+test("Composio missing metadata uses Portuguese fallbacks", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    type: "composio.trigger.message", data: { plain: true },
+  });
+  assert.equal(message, [
+    "[Composio] Novo evento do gatilho desconhecido:",
+    "Data e hora: não informadas",
+    "", "Dados:", '{\n  "plain": true\n}',
+  ].join("\n"));
+});
+
+test("Composio rejects malformed payloads with 400", async () => {
+  for (const payload of [null, "text", 42]) {
+    const res = await composio.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+    assert.equal(res.status, 400);
+    assert.equal((await res.json()).error, "invalid_payload");
+  }
+});
+
+test("Composio ignores non-trigger events without forwarding", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => { calls.push(url); return Response.json({}); });
+  for (const payload of [
+    { id: "evt-ign-1", type: "composio.connection.expired", data: {} },
+    { id: "evt-ign-2", trigger_slug: "LEGACY_V1_EVENT", payload: {} },
+    { id: "evt-ign-3" },
+  ]) {
+    const res = await composio.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+    assert.equal(res.status, 202);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("Composio deduplicates retried deliveries by event id and retries failed forwards", async (t) => {
+  const calls = [];
+  let pokeOk = false;
+  t.mock.method(globalThis, "fetch", async () => {
+    calls.push(1);
+    return pokeOk ? Response.json({}) : new Response("boom", { status: 500 });
+  });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = { ...COMPOSIO_EVENT, id: "evt-comp-dup-1" };
+
+  const first = await composio.handle(structuredClone(payload), env, ctx);
+  assert.equal(first.status, 503);
+  assert.equal((await first.json()).error, "poke_forward_failed");
+
+  pokeOk = true;
+  const second = await composio.handle(structuredClone(payload), env, ctx);
+  assert.equal(second.status, 200);
+  const third = await composio.handle(structuredClone(payload), env, ctx);
+  assert.equal(third.status, 202);
+  assert.equal(calls.length, 2);
+});
+
+async function composioSignature(secret, id, timestamp, body) {
+  const key = await crypto.subtle.importKey(
+    "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC", key, new TextEncoder().encode(`${id}.${timestamp}.${body}`),
+  );
+  return Buffer.from(sig).toString("base64");
+}
+
+async function composioAuthRequest(body, { id = "msg-1", timestamp, signature, secret = "composio-secret" } = {}) {
+  const ts = timestamp ?? Math.floor(Date.now() / 1000).toString();
+  const headers = { "webhook-id": id, "webhook-timestamp": ts };
+  if (signature !== null) {
+    headers["webhook-signature"] = signature ?? `v1,${await composioSignature(secret, id, ts, body)}`;
+  }
+  return new Request("https://worker.test/composio", { method: "POST", headers });
+}
+
+test("Composio authorize verifies the Standard Webhooks signature", async () => {
+  const body = JSON.stringify(COMPOSIO_EVENT);
+  const env = { COMPOSIO_WEBHOOK_SECRET: "composio-secret" };
+
+  assert.equal(await composio.authorize(body, await composioAuthRequest(body), env), null);
+
+  for (const [request, expected] of [
+    [await composioAuthRequest(body, { signature: null }), "missing_signature_headers"],
+    [new Request("https://worker.test/composio", { method: "POST" }), "missing_signature_headers"],
+    [await composioAuthRequest(body, { signature: "v1,ZGVhZGJlZWY=" }), "invalid_signature"],
+    [await composioAuthRequest(body, { secret: "other-secret" }), "invalid_signature"],
+    [await composioAuthRequest(body + " "), "invalid_signature"],
+    [await composioAuthRequest(body, { timestamp: (Math.floor(Date.now() / 1000) - 400).toString() }), "stale_timestamp"],
+    [await composioAuthRequest(body, { timestamp: "not-a-number" }), "stale_timestamp"],
+  ]) {
+    const res = await composio.authorize(body, request, env);
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, expected);
+  }
+});
+
+test("Composio authorize accepts a comma/space-delimited signature list", async () => {
+  const body = JSON.stringify(COMPOSIO_EVENT);
+  const env = { COMPOSIO_WEBHOOK_SECRET: "composio-secret" };
+  const ts = Math.floor(Date.now() / 1000).toString();
+  const sig = await composioSignature("composio-secret", "msg-1", ts, body);
+  const request = await composioAuthRequest(body, {
+    timestamp: ts,
+    signature: `v1,ZmFrZQ== v1,${sig},v1,b3RoZXI=`,
+  });
+  assert.equal(await composio.authorize(body, request, env), null);
+});
+
+test("Composio authorize fails closed when the secret is not configured", async () => {
+  const res = await composio.authorize("{}", await composioAuthRequest("{}"), {});
+  assert.equal(res.status, 500);
+  assert.equal((await res.json()).error, "missing_webhook_secret");
+});

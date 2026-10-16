@@ -9,6 +9,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /agentmail` | [AgentMail](https://docs.agentmail.to/webhooks-overview) | `message.received`, `message.sent`, `message.delivered` |
 | `POST /anakin` | [Anakin](https://anakin.io/docs/api-reference/webhooks) | `job.*`, `batch.*`, `wire.job.*`, `monitor.change`, `ai.search.*`, `webhook.test` — deliveries are deduplicated by event id (`changeId` for `monitor.change`) |
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
+| `POST /composio` | [Composio](https://docs.composio.dev/docs/setting-up-triggers/subscribing-to-events) | `composio.trigger.message` (V3 envelope) — `metadata.trigger_slug` and `data` are forwarded; other project event types and legacy V1/V2 envelopes are ignored |
 | `POST /goal-api` | [GOAL API](https://goal-api.com/documentation#webhooks) | `match.started`, `match.finished`, `goal.scored`, `score.changed`, `match.status_changed` — the full payload is forwarded as JSON |
 | `POST /parallel` | [Parallel](https://docs.parallel.ai/task-api/webhooks) | `task_run.status` — the run input is fetched via `GET /v1/tasks/runs/{run_id}/input` and the result via `GET /v1/tasks/runs/{run_id}/result` (completed runs) and forwarded |
 | `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
@@ -46,6 +47,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `AGENTMAIL_WEBHOOK_SECRET` | AgentMail webhook signing secret (`whsec_...`), from `agentmail webhooks get` or the AgentMail console |
 | `ANAKIN_WEBHOOK_SECRET` | Anakin webhook signing secret (`whsec_...`) — the endpoint secret or the default signing secret, from Account → Webhooks; verifies `X-Anakin-Signature` |
 | `CIRCLEBACK_WEBHOOK_SECRET` | Circleback webhook signing secret, provided when configuring a webhook automation |
+| `COMPOSIO_WEBHOOK_SECRET` | Composio webhook subscription secret, from the project's webhook settings; verifies `webhook-signature` (Standard Webhooks scheme) |
 | `GOAL_API_WEBHOOK_SECRET` | GOAL API endpoint signing secret, shown once when creating a webhook endpoint in the [dashboard](https://goal-api.com/dashboard/webhooks); verifies `X-Goal-Signature` |
 | `PARALLEL_WEBHOOK_SECRET` | Parallel account webhook secret (`whsec_...`), from Settings → Webhooks on [platform.parallel.ai](https://platform.parallel.ai); verifies `webhook-signature` (Standard Webhooks) |
 | `PARALLEL_API_KEY` | Parallel API key; used to fetch the run input and result when a `task_run.status` event arrives |
@@ -60,6 +62,7 @@ wrangler secret put POKE_API_KEY
 wrangler secret put AGENTMAIL_WEBHOOK_SECRET
 wrangler secret put ANAKIN_WEBHOOK_SECRET
 wrangler secret put CIRCLEBACK_WEBHOOK_SECRET
+wrangler secret put COMPOSIO_WEBHOOK_SECRET
 wrangler secret put GOAL_API_WEBHOOK_SECRET
 wrangler secret put PARALLEL_WEBHOOK_SECRET
 wrangler secret put PARALLEL_API_KEY
@@ -99,6 +102,8 @@ curl -X PATCH https://api.pluggy.ai/webhooks/<webhook_id> \
 ```
 
 Set the same value as `PLUGGY_WEBHOOK_SECRET`. For extra security you can also whitelist Pluggy's egress IP `52.67.145.81` at the network layer.
+
+Example for Composio. Webhook subscriptions are configured once per project — in the [Composio dashboard](https://platform.composio.dev) (Project Settings → Webhooks) or via the API, set the payload URL to `https://<your-worker>.workers.dev/composio` and copy the generated webhook secret into `COMPOSIO_WEBHOOK_SECRET`. Only trigger instances that are enabled/active send events, so enable each trigger you want. Deliveries use the V3 envelope `{id, type: "composio.trigger.message", metadata: {trigger_slug, trigger_id, connected_account_id, ...}, data, timestamp}` and are signed per the [Standard Webhooks](https://www.standardwebhooks.com/) scheme: `webhook-signature: v1,<base64 HMAC-SHA256>` over `${webhook-id}.${webhook-timestamp}.${rawBody}`, with timestamps older than five minutes rejected. Other project events sent to the same URL (e.g. connection lifecycle events) and legacy V1/V2 envelopes are acknowledged with `202` and not forwarded. Deliveries are deduplicated by event `id`, and a Poke forward failure returns `503` so Composio redelivers.
 
 Example for GOAL API. Create the endpoint in the [webhooks dashboard](https://goal-api.com/dashboard/webhooks) pointing at `https://<your-worker>.workers.dev/goal-api`, select the events and (optionally) `leagueIds` to filter competitions. The signing secret is shown once at creation — copy it into `GOAL_API_WEBHOOK_SECRET`. Deliveries are signed via `X-Goal-Signature: t=<ts>,v1=<hmac-sha256 hex>` over `<ts>.<raw body>`, and signatures older than five minutes are rejected.
 
