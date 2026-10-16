@@ -27,6 +27,7 @@ export interface Env {
   TINYFISH_API_KEY: string;
   PARALLEL_API_URL?: string;
   POKE_API_URL?: string;
+  SLACK_USER_ID?: string;
 }
 
 export interface SourceHandler {

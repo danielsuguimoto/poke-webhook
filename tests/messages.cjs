@@ -14,7 +14,7 @@ async function forwardedMessage(t, source, payload, task) {
   const originalTask = structuredClone(task);
   const calls = [];
   const pending = [];
-  const env = { POKE_API_KEY: "test-poke-key", TODOIST_API_TOKEN: "test-todoist-token", TINYFISH_API_KEY: "test-tinyfish-key" };
+  const env = { POKE_API_KEY: "test-poke-key", TODOIST_API_TOKEN: "test-todoist-token", TINYFISH_API_KEY: "test-tinyfish-key", SLACK_USER_ID: "U01D45GTXRB" };
   t.mock.method(globalThis, "fetch", async (url, options) => {
     if (url.startsWith("https://agent.tinyfish.ai/")) {
       const status = { "run.completed": "COMPLETED", "run.failed": "FAILED", "run.cancelled": "CANCELLED" }[payload.event];
@@ -916,6 +916,117 @@ test("Composio deduplicates retried deliveries by event id and retries failed fo
   const third = await composio.handle(structuredClone(payload), env, ctx);
   assert.equal(third.status, 202);
   assert.equal(calls.length, 2);
+});
+
+const COMPOSIO_SLACK_CHANNEL_EVENT = {
+  id: "evt-comp-chan-1",
+  type: "composio.trigger.message",
+  metadata: { log_id: "log-chan-1", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+  data: {
+    channel: "C123",
+    channel_type: "channel",
+    user: "U999",
+    text: "hello everyone",
+    blocks: [
+      {
+        type: "rich_text",
+        elements: [
+          { type: "rich_text_section", elements: [{ type: "text", text: "hello everyone" }] },
+        ],
+      },
+    ],
+  },
+  timestamp: "2026-10-16T12:00:00Z",
+};
+
+test("Composio ignores Slack channel messages without a mention of the configured user", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const env = { POKE_API_KEY: "k", SLACK_USER_ID: "U01D45GTXRB" };
+  for (const payload of [
+    COMPOSIO_SLACK_CHANNEL_EVENT,
+    { ...COMPOSIO_SLACK_CHANNEL_EVENT, id: "evt-comp-chan-2", metadata: { log_id: "log-chan-2", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" }, data: { channel_type: "channel", text: "hi <@U999OTHER>" } },
+    // Sent by the configured user without a self-mention: sender fields are not mentions.
+    { ...COMPOSIO_SLACK_CHANNEL_EVENT, id: "evt-comp-chan-3", metadata: { log_id: "log-chan-3", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" }, data: { channel_type: "channel", user: "U01D45GTXRB", user_id: "U01D45GTXRB", text: "posted it myself" } },
+    // A different user whose ID has the configured ID as a prefix is not a mention.
+    { ...COMPOSIO_SLACK_CHANNEL_EVENT, id: "evt-comp-chan-4", metadata: { log_id: "log-chan-4", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" }, data: { channel_type: "channel", text: "hi <@U01D45GTXRB2>" } },
+  ]) {
+    const res = await composio.handle(structuredClone(payload), env, { waitUntil: () => {} });
+    assert.equal(res.status, 202);
+    assert.equal((await res.json()).status, "ignored");
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("Composio forwards Slack channel messages when SLACK_USER_ID is not configured", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => { calls.push({ url, options }); return Response.json({}); });
+  const res = await composio.handle(structuredClone({
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-chan-nouser",
+    metadata: { log_id: "log-chan-nouser", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+  }), { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test("Composio forwards Slack channel messages that mention the configured user", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-chan-mention",
+    metadata: { log_id: "log-chan-mention", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+    data: {
+      channel: "C123",
+      channel_type: "channel",
+      text: "hello",
+      blocks: [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [
+                { type: "text", text: "hey " },
+                { type: "user", user_id: "U01D45GTXRB" },
+                { type: "text", text: " <@U01D45GTXRB>" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
+});
+
+test("Composio forwards channel mentions in the <@ID|label> form", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-chan-label",
+    metadata: { log_id: "log-chan-label", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+    data: { channel_type: "channel", text: "hey <@U01D45GTXRB|daniel> look" },
+  });
+  assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
+});
+
+test("Composio forwards non-Slack channel events regardless of mentions", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-discord-1",
+    metadata: { log_id: "log-discord-1", trigger_slug: "DISCORD_CHANNEL_MESSAGE_CREATED" },
+    data: { channel_type: "channel", text: "no mention here" },
+  });
+  assert.match(message, /DISCORD_CHANNEL_MESSAGE_CREATED/);
+});
+
+test("Composio forwards all Slack direct messages without a mention", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-dm-1",
+    metadata: { log_id: "log-dm-1", trigger_slug: "SLACK_DIRECT_MESSAGE_RECEIVED" },
+    data: { channel: "D123", channel_type: "im", user: "U999", text: "hi, no mention here" },
+  });
+  assert.match(message, /SLACK_DIRECT_MESSAGE_RECEIVED/);
 });
 
 async function composioSignature(secret, id, timestamp, body) {
