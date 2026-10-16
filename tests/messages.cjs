@@ -874,7 +874,7 @@ test("Composio missing metadata uses Portuguese fallbacks", async (t) => {
 });
 
 test("Composio rejects malformed payloads with 400", async () => {
-  for (const payload of [null, "text", 42]) {
+  for (const payload of [null, "text", 42, [], [{ type: "composio.trigger.message" }]]) {
     const res = await composio.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
     assert.equal(res.status, 400);
     assert.equal((await res.json()).error, "invalid_payload");
@@ -951,6 +951,7 @@ test("Composio authorize verifies the Standard Webhooks signature", async () => 
     [await composioAuthRequest(body + " "), "invalid_signature"],
     [await composioAuthRequest(body, { timestamp: (Math.floor(Date.now() / 1000) - 400).toString() }), "stale_timestamp"],
     [await composioAuthRequest(body, { timestamp: "not-a-number" }), "stale_timestamp"],
+    [await composioAuthRequest(body, { timestamp: `${Math.floor(Date.now() / 1000)}junk` }), "stale_timestamp"],
   ]) {
     const res = await composio.authorize(body, request, env);
     assert.equal(res.status, 401);

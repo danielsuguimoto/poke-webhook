@@ -42,7 +42,7 @@ export const composio: SourceHandler = {
       return json(401, { error: "missing_signature_headers" });
     }
 
-    const ts = Number.parseInt(timestamp, 10);
+    const ts = /^\d+$/.test(timestamp) ? Number.parseInt(timestamp, 10) : NaN;
     if (Number.isNaN(ts) || Math.abs(Math.floor(Date.now() / 1000) - ts) > TIMESTAMP_TOLERANCE_SECONDS) {
       return json(401, { error: "stale_timestamp" });
     }
@@ -56,7 +56,7 @@ export const composio: SourceHandler = {
   },
 
   async handle(payload, env, _ctx): Promise<Response> {
-    if (!payload || typeof payload !== "object") {
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       return json(400, { error: "invalid_payload" });
     }
     const eventType = typeof payload.type === "string" ? payload.type : "";
