@@ -160,24 +160,33 @@ function containsMention(data: Record<string, unknown>, userId: string): boolean
   return containsUserId(rest, userId);
 }
 
-const BROADCAST_MENTIONS = ["here", "channel"] as const;
+// mrkdwn literal contexts where mention-looking text is not a real mention:
+// inline `code` spans and fenced ``` code blocks ```.
+const MRKDWN_LITERAL = /```[\s\S]*?```|`[^`\n]*`/g;
+// `<!here>` and `<!channel>` including the labeled `<!here|@here>` form; the
+// closing `>` is required so an unfinished `<!here|label` is not a mention.
+const BROADCAST_MENTION = /<!(here|channel)(\|[^>]*)?>/;
+const BROADCAST_RANGES = new Set(["here", "channel"]);
+// rich_text block elements whose contents are preformatted (literal) text;
+// mention-like tokens inside them are code samples, not mentions.
+const LITERAL_BLOCK_TYPES = new Set(["rich_text_preformatted"]);
 
 function containsUserId(value: unknown, userId: string): boolean {
   if (typeof value === "string") {
-    return value === userId
+    if (value === userId
       || value.includes(`<@${userId}>`)
-      || value.includes(`<@${userId}|`)
-      || BROADCAST_MENTIONS.some(
-        (mention) => value.includes(`<!${mention}>`) || value.includes(`<!${mention}|`),
-      );
+      || value.includes(`<@${userId}|`)) {
+      return true;
+    }
+    return BROADCAST_MENTION.test(value.replace(MRKDWN_LITERAL, " "));
   }
   if (Array.isArray(value)) return value.some((v) => containsUserId(v, userId));
   if (value && typeof value === "object") {
     const record = value as Record<string, unknown>;
-    if (
-      record.type === "broadcast"
-      && BROADCAST_MENTIONS.some((mention) => record.range === mention)
-    ) {
+    if (typeof record.type === "string" && LITERAL_BLOCK_TYPES.has(record.type)) {
+      return false;
+    }
+    if (record.type === "broadcast" && BROADCAST_RANGES.has(record.range as string)) {
       return true;
     }
     for (const nested of Object.values(value)) {

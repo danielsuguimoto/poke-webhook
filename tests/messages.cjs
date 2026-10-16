@@ -1062,6 +1062,17 @@ test("Composio still ignores Slack channel messages with unsupported broadcast m
   for (const [id, data] of [
     ["evt-comp-everyone", { channel_type: "channel", text: "everyone <!everyone> wake up" }],
     ["evt-comp-broadcast-other", { channel_type: "channel", blocks: [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "broadcast", range: "everyone" }] }] }] }],
+    // Broadcast tokens inside mrkdwn code spans/fences are literals, not mentions.
+    ["evt-comp-here-inline-code", { channel_type: "channel", text: "post `<!here>` like this" }],
+    ["evt-comp-channel-fenced", { channel_type: "channel", text: "example:\n```\nhey <!channel> hi\n```\ndone" }],
+    // Broadcast elements inside preformatted (code) blocks are literals.
+    ["evt-comp-preformatted", {
+      channel_type: "channel",
+      text: "example below",
+      blocks: [{ type: "rich_text", elements: [{ type: "rich_text_preformatted", elements: [{ type: "broadcast", range: "channel" }, { type: "text", text: "<!here>" }] }] }],
+    }],
+    // A labeled broadcast token without the closing `>` is not a mention.
+    ["evt-comp-here-unclosed", { channel_type: "channel", text: "hey <!here|daniel look" }],
   ]) {
     const res = await composio.handle(structuredClone({
       ...COMPOSIO_SLACK_CHANNEL_EVENT,
