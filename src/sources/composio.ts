@@ -71,7 +71,23 @@ export const composio: SourceHandler = {
     const metadata = payload.metadata && typeof payload.metadata === "object"
       ? (payload.metadata as Record<string, unknown>)
       : {};
+    const data = payload.data && typeof payload.data === "object" && !Array.isArray(payload.data)
+      ? (payload.data as Record<string, unknown>)
+      : {};
     const dedupId = eventId || str(metadata.log_id);
+
+    // Slack channel messages are only relevant when the configured user is
+    // mentioned; acknowledge without forwarding so Composio does not retry.
+    // Direct messages always forward, as does everything when SLACK_USER_ID
+    // is not configured (there is nothing to match mentions against).
+    const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
+    if (
+      env.SLACK_USER_ID
+      && isChannelMessageTrigger(triggerSlug, data)
+      && !containsMention(payload.data, env.SLACK_USER_ID)
+    ) {
+      return ignored(eventType, dedupId);
+    }
 
     if (dedupId) {
       const pending = inFlight.get(dedupId);
@@ -117,6 +133,29 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 function str(v: unknown): string {
   return typeof v === "string" && v ? v : "";
+}
+
+// Channel-message triggers (e.g. SLACK_CHANNEL_MESSAGE_RECEIVED) are gated on
+// a mention; direct messages (e.g. SLACK_DIRECT_MESSAGE_RECEIVED) are not.
+function isChannelMessageTrigger(triggerSlug: string, data: Record<string, unknown>): boolean {
+  const slug = triggerSlug.toUpperCase();
+  if (slug.includes("DIRECT_MESSAGE") || /(^|_)DM(_|$)/.test(slug)) return false;
+  if (slug.includes("CHANNEL") && slug.includes("MESSAGE")) return true;
+  const channelType = str(data.channel_type);
+  return channelType === "channel" || channelType === "group";
+}
+
+// Matches the `<@U...>` mention form in message text as well as rich_text
+// `user`/`user_id` block fields, which carry the bare user ID.
+function containsMention(value: unknown, userId: string): boolean {
+  if (typeof value === "string") return value.includes(userId);
+  if (Array.isArray(value)) return value.some((v) => containsMention(v, userId));
+  if (value && typeof value === "object") {
+    for (const nested of Object.values(value)) {
+      if (containsMention(nested, userId)) return true;
+    }
+  }
+  return false;
 }
 
 function translate(
