@@ -1009,6 +1009,83 @@ test("Composio forwards channel mentions in the <@ID|label> form", async (t) => 
   assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
 });
 
+test("Composio forwards Slack channel messages with broadcast mentions", async (t) => {
+  const cases = [
+    ["evt-comp-broadcast-here", "heads up <!here> standup", "text <!here>"],
+    ["evt-comp-broadcast-here-label", "heads up <!here|@here> standup", "text <!here|label>"],
+    ["evt-comp-broadcast-channel", "announcement <!channel> read", "text <!channel>"],
+    ["evt-comp-broadcast-channel-label", "announcement <!channel|@channel> read", "text <!channel|label>"],
+  ];
+  for (const [id, text, name] of cases) {
+    const message = await forwardedMessage(t, composio, {
+      ...COMPOSIO_SLACK_CHANNEL_EVENT,
+      id,
+      metadata: { log_id: `log-${id}`, trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+      data: { channel_type: "channel", text },
+    });
+    assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/, name);
+  }
+});
+
+test("Composio forwards Slack channel messages with a broadcast rich_text element", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-broadcast-element",
+    metadata: { log_id: "log-comp-broadcast-element", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+    data: {
+      channel: "C123",
+      channel_type: "channel",
+      text: "hello",
+      blocks: [
+        {
+          type: "rich_text",
+          elements: [
+            {
+              type: "rich_text_section",
+              elements: [
+                { type: "text", text: "attention " },
+                { type: "broadcast", range: "channel" },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  });
+  assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
+});
+
+test("Composio still ignores Slack channel messages with unsupported broadcast mentions", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const env = { POKE_API_KEY: "k", SLACK_USER_ID: "U01D45GTXRB" };
+  for (const [id, data] of [
+    ["evt-comp-everyone", { channel_type: "channel", text: "everyone <!everyone> wake up" }],
+    ["evt-comp-broadcast-other", { channel_type: "channel", blocks: [{ type: "rich_text", elements: [{ type: "rich_text_section", elements: [{ type: "broadcast", range: "everyone" }] }] }] }],
+    // Broadcast tokens inside mrkdwn code spans/fences are literals, not mentions.
+    ["evt-comp-here-inline-code", { channel_type: "channel", text: "post `<!here>` like this" }],
+    ["evt-comp-channel-fenced", { channel_type: "channel", text: "example:\n```\nhey <!channel> hi\n```\ndone" }],
+    // Broadcast elements inside preformatted (code) blocks are literals.
+    ["evt-comp-preformatted", {
+      channel_type: "channel",
+      text: "example below",
+      blocks: [{ type: "rich_text", elements: [{ type: "rich_text_preformatted", elements: [{ type: "broadcast", range: "channel" }, { type: "text", text: "<!here>" }] }] }],
+    }],
+    // A labeled broadcast token without the closing `>` is not a mention.
+    ["evt-comp-here-unclosed", { channel_type: "channel", text: "hey <!here|daniel look" }],
+  ]) {
+    const res = await composio.handle(structuredClone({
+      ...COMPOSIO_SLACK_CHANNEL_EVENT,
+      id,
+      metadata: { log_id: `log-${id}`, trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" },
+      data,
+    }), env, { waitUntil: () => {} });
+    assert.equal(res.status, 202);
+    assert.equal((await res.json()).status, "ignored");
+  }
+  assert.equal(calls.length, 0);
+});
+
 test("Composio forwards non-Slack channel events regardless of mentions", async (t) => {
   const message = await forwardedMessage(t, composio, {
     ...COMPOSIO_SLACK_CHANNEL_EVENT,

@@ -151,21 +151,44 @@ function isChannelMessageTrigger(triggerSlug: string, data: Record<string, unkno
 }
 
 // Matches the `<@U...>` mention form in message text as well as `user`/`user_id`
-// fields in rich_text blocks. The top-level `user`/`user_id` sender fields are
-// excluded so messages the configured user posts are not treated as mentions.
+// fields in rich_text blocks, plus the `<!here>`/`<!channel>` broadcast mentions
+// (text form and `broadcast` rich_text elements). The top-level `user`/`user_id`
+// sender fields are excluded so messages the configured user posts are not
+// treated as mentions.
 function containsMention(data: Record<string, unknown>, userId: string): boolean {
   const { user: _user, user_id: _userId, ...rest } = data;
   return containsUserId(rest, userId);
 }
 
+// mrkdwn literal contexts where mention-looking text is not a real mention:
+// inline `code` spans and fenced ``` code blocks ```.
+const MRKDWN_LITERAL = /```[\s\S]*?```|`[^`\n]*`/g;
+// `<!here>` and `<!channel>` including the labeled `<!here|@here>` form; the
+// closing `>` is required so an unfinished `<!here|label` is not a mention.
+const BROADCAST_MENTION = /<!(here|channel)(\|[^>]*)?>/;
+const BROADCAST_RANGES = new Set(["here", "channel"]);
+// rich_text block elements whose contents are preformatted (literal) text;
+// mention-like tokens inside them are code samples, not mentions.
+const LITERAL_BLOCK_TYPES = new Set(["rich_text_preformatted"]);
+
 function containsUserId(value: unknown, userId: string): boolean {
   if (typeof value === "string") {
-    return value === userId
+    if (value === userId
       || value.includes(`<@${userId}>`)
-      || value.includes(`<@${userId}|`);
+      || value.includes(`<@${userId}|`)) {
+      return true;
+    }
+    return BROADCAST_MENTION.test(value.replace(MRKDWN_LITERAL, " "));
   }
   if (Array.isArray(value)) return value.some((v) => containsUserId(v, userId));
   if (value && typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    if (typeof record.type === "string" && LITERAL_BLOCK_TYPES.has(record.type)) {
+      return false;
+    }
+    if (record.type === "broadcast" && BROADCAST_RANGES.has(record.range as string)) {
+      return true;
+    }
     for (const nested of Object.values(value)) {
       if (containsUserId(nested, userId)) return true;
     }
