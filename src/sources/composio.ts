@@ -84,7 +84,7 @@ export const composio: SourceHandler = {
     if (
       env.SLACK_USER_ID
       && isChannelMessageTrigger(triggerSlug, data)
-      && !containsMention(payload.data, env.SLACK_USER_ID)
+      && !containsMention(data, env.SLACK_USER_ID)
     ) {
       return ignored(eventType, dedupId);
     }
@@ -137,22 +137,33 @@ function str(v: unknown): string {
 
 // Channel-message triggers (e.g. SLACK_CHANNEL_MESSAGE_RECEIVED) are gated on
 // a mention; direct messages (e.g. SLACK_DIRECT_MESSAGE_RECEIVED) are not.
+// Only Slack events are gated: non-Slack triggers that happen to name a
+// channel or carry `channel_type` are forwarded as before.
 function isChannelMessageTrigger(triggerSlug: string, data: Record<string, unknown>): boolean {
   const slug = triggerSlug.toUpperCase();
   if (slug.includes("DIRECT_MESSAGE") || /(^|_)DM(_|$)/.test(slug)) return false;
-  if (slug.includes("CHANNEL") && slug.includes("MESSAGE")) return true;
   const channelType = str(data.channel_type);
-  return channelType === "channel" || channelType === "group";
+  const channelMessage =
+    (slug.includes("CHANNEL") && slug.includes("MESSAGE"))
+    || channelType === "channel" || channelType === "group";
+  if (!channelMessage) return false;
+  return slug.includes("SLACK") || (!slug && !!channelType);
 }
 
-// Matches the `<@U...>` mention form in message text as well as rich_text
-// `user`/`user_id` block fields, which carry the bare user ID.
-function containsMention(value: unknown, userId: string): boolean {
-  if (typeof value === "string") return value.includes(userId);
-  if (Array.isArray(value)) return value.some((v) => containsMention(v, userId));
+// Matches the `<@U...>` mention form in message text as well as `user`/`user_id`
+// fields in rich_text blocks. The top-level `user`/`user_id` sender fields are
+// excluded so messages the configured user posts are not treated as mentions.
+function containsMention(data: Record<string, unknown>, userId: string): boolean {
+  const { user: _user, user_id: _userId, ...rest } = data;
+  return containsUserId(rest, userId);
+}
+
+function containsUserId(value: unknown, userId: string): boolean {
+  if (typeof value === "string") return value === userId || value.includes(`<@${userId}>`);
+  if (Array.isArray(value)) return value.some((v) => containsUserId(v, userId));
   if (value && typeof value === "object") {
     for (const nested of Object.values(value)) {
-      if (containsMention(nested, userId)) return true;
+      if (containsUserId(nested, userId)) return true;
     }
   }
   return false;

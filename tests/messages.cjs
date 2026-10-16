@@ -946,6 +946,10 @@ test("Composio ignores Slack channel messages without a mention of the configure
   for (const payload of [
     COMPOSIO_SLACK_CHANNEL_EVENT,
     { ...COMPOSIO_SLACK_CHANNEL_EVENT, id: "evt-comp-chan-2", metadata: { log_id: "log-chan-2", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" }, data: { channel_type: "channel", text: "hi <@U999OTHER>" } },
+    // Sent by the configured user without a self-mention: sender fields are not mentions.
+    { ...COMPOSIO_SLACK_CHANNEL_EVENT, id: "evt-comp-chan-3", metadata: { log_id: "log-chan-3", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" }, data: { channel_type: "channel", user: "U01D45GTXRB", user_id: "U01D45GTXRB", text: "posted it myself" } },
+    // A different user whose ID has the configured ID as a prefix is not a mention.
+    { ...COMPOSIO_SLACK_CHANNEL_EVENT, id: "evt-comp-chan-4", metadata: { log_id: "log-chan-4", trigger_slug: "SLACK_CHANNEL_MESSAGE_RECEIVED" }, data: { channel_type: "channel", text: "hi <@U01D45GTXRB2>" } },
   ]) {
     const res = await composio.handle(structuredClone(payload), env, { waitUntil: () => {} });
     assert.equal(res.status, 202);
@@ -993,6 +997,16 @@ test("Composio forwards Slack channel messages that mention the configured user"
     },
   });
   assert.match(message, /SLACK_CHANNEL_MESSAGE_RECEIVED/);
+});
+
+test("Composio forwards non-Slack channel events regardless of mentions", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-discord-1",
+    metadata: { log_id: "log-discord-1", trigger_slug: "DISCORD_CHANNEL_MESSAGE_CREATED" },
+    data: { channel_type: "channel", text: "no mention here" },
+  });
+  assert.match(message, /DISCORD_CHANNEL_MESSAGE_CREATED/);
 });
 
 test("Composio forwards all Slack direct messages without a mention", async (t) => {
