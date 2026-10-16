@@ -3,6 +3,7 @@ import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
 import { anakin } from "./sources/anakin";
 import { circleback } from "./sources/circleback";
+import { composio } from "./sources/composio";
 import { goalApi } from "./sources/goal-api";
 import { parallel } from "./sources/parallel";
 import { pluggy } from "./sources/pluggy";
@@ -15,6 +16,7 @@ export interface Env {
   AGENTMAIL_WEBHOOK_SECRET: string;
   ANAKIN_WEBHOOK_SECRET: string;
   CIRCLEBACK_WEBHOOK_SECRET: string;
+  COMPOSIO_WEBHOOK_SECRET: string;
   GOAL_API_WEBHOOK_SECRET: string;
   PARALLEL_WEBHOOK_SECRET: string;
   PARALLEL_API_KEY: string;
@@ -40,6 +42,7 @@ const ROUTES: Record<string, SourceHandler> = {
   "/agentmail": agentmail,
   "/anakin": anakin,
   "/circleback": circleback,
+  "/composio": composio,
   "/goal-api": goalApi,
   "/parallel": parallel,
   "/pluggy": pluggy,
