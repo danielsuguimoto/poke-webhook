@@ -14,6 +14,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /parallel` | [Parallel](https://docs.parallel.ai/task-api/webhooks) | `task_run.status` — the run input is fetched via `GET /v1/tasks/runs/{run_id}/input` and the result via `GET /v1/tasks/runs/{run_id}/result` (completed runs) and forwarded |
 | `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
 | `POST /ramble` | [Ramble](https://goodloop.dev/ramble/docs) | Finished recordings — the transcript is forwarded; deliveries are deduplicated by `recording_id` (test payloads are always forwarded) |
+| `POST /resend` | [Resend](https://resend.com/docs/webhooks/introduction) | `email.*`, `domain.*`, `contact.*`, `suppression.*`, `topic.*`, `inbox.*` — deliveries are deduplicated by event `type` + `created_at` + event data (retries redeliver an identical body) |
 | `POST /tinyfish` | [TinyFish](https://docs.tinyfish.ai/webhooks) | `run.completed`, `run.failed`, `run.cancelled` — deliveries are deduplicated by `run_id` |
 | `POST /todoist` | [Todoist](https://developer.todoist.com/api/v1/#tag/Webhooks) | `reminder:fired` — the task is fetched via the Todoist API and forwarded; Poke executes tasks with the `ai` label (marking them complete afterwards) and warns you about the rest |
 
@@ -22,7 +23,7 @@ Other event types are acknowledged with `202` and not forwarded (Todoist gets `2
 ## How it works
 
 1. A tool POSTs an event to its source-specific path on the Worker URL.
-2. The source handler verifies the request signature (AgentMail signs webhooks via Svix; see [verification docs](https://docs.agentmail.to/webhook-verification)).
+2. The source handler verifies the request signature (AgentMail and Resend sign webhooks via Svix; see the [AgentMail](https://docs.agentmail.to/webhook-verification) and [Resend](https://resend.com/docs/dashboard/webhooks/verify-webhooks-requests) verification docs).
 3. The source handler translates the payload into a plain-text `message` string.
 4. The message is forwarded to `POST $POKE_API_URL` with `Authorization: Bearer $POKE_API_KEY`.
 5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`.
@@ -54,6 +55,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `PARALLEL_API_KEY` | Parallel API key; used to fetch the run input and result when a `task_run.status` event arrives |
 | `PLUGGY_WEBHOOK_SECRET` | Shared secret you choose; Pluggy sends it as the `x-webhook-secret` header |
 | `RAMBLE_WEBHOOK_SECRET` | Ramble destination signing secret, from the destination's detail screen in Settings → Send via Webhook; verifies `X-Webhook-Signature` |
+| `RESEND_WEBHOOK_SECRET` | Resend endpoint signing secret (`whsec_...`), from the webhook's details page or the create/retrieve API response; verifies `svix-signature` |
 | `TODOIST_WEBHOOK_SECRET` | Todoist app `client_secret`, from the [App Management Console](https://app.todoist.com/app/settings/integrations/app-management-console); used to verify `X-Todoist-Hmac-SHA256` |
 | `TODOIST_API_TOKEN` | Todoist API token (personal token from Settings → Integrations, or OAuth access token); used to fetch the task when a reminder fires |
 | `TINYFISH_API_KEY` | TinyFish API key; each webhook's `run_id` is verified against `GET /v1/runs/{id}` before forwarding (TinyFish does not sign webhooks, so the worker fails closed without the key) |
@@ -69,6 +71,7 @@ wrangler secret put PARALLEL_WEBHOOK_SECRET
 wrangler secret put PARALLEL_API_KEY
 wrangler secret put PLUGGY_WEBHOOK_SECRET
 wrangler secret put RAMBLE_WEBHOOK_SECRET
+wrangler secret put RESEND_WEBHOOK_SECRET
 wrangler secret put TODOIST_WEBHOOK_SECRET
 wrangler secret put TODOIST_API_TOKEN
 wrangler secret put TINYFISH_API_KEY
@@ -132,6 +135,8 @@ curl -X POST https://api.parallel.ai/v1/tasks/runs \
 On completion the worker fetches the run input (and result, for `completed` runs) with `PARALLEL_API_KEY` and forwards both to Poke. Non-terminal statuses are acknowledged with `202` and not forwarded.
 
 Example for Ramble. In the Ramble app, go to Settings → Send via Webhook, tap Add a destination, and paste `https://<your-worker>.workers.dev/ramble`. Copy the destination's signing secret from its detail screen into `RAMBLE_WEBHOOK_SECRET` — deliveries are signed via `X-Webhook-Signature: sha256=<hmac-sha256 hex>` over the raw body. Use Send Test Webhook in the app to verify the setup; test payloads (`test: true`, `recording_id` prefixed `test-`) are always forwarded so you can confirm the round trip. Failed deliveries are retried by Ramble up to 3 times, so duplicates of the same `recording_id` are deduplicated and acknowledged with `202`.
+
+Example for Resend. In the [Resend dashboard](https://resend.com/webhooks) (or via `POST /webhooks` on the API), create a webhook pointing at `https://<your-worker>.workers.dev/resend` and select the events to receive. Copy the signing secret (`whsec_...`) from the webhook's details page into `RESEND_WEBHOOK_SECRET` — deliveries are signed via `svix-id`, `svix-timestamp` and `svix-signature` headers (Svix / Standard Webhooks scheme). `email.*` events are forwarded with sender, recipients, subject and timestamp; `domain.*`, `contact.*`, `suppression.*`, `topic.*` and `inbox.*` events forward a summary plus the event data. Retried deliveries share the same `svix-id` and body, so duplicates are deduplicated by `type` + `created_at` + event data and acknowledged with `202`; a Poke forward failure returns `503` so Resend redelivers.
 
 Example for Todoist. In the App Management Console, set the webhook callback URL to `https://<your-worker>.workers.dev/todoist` and subscribe to `reminder:fired`. Webhooks only fire for users who completed your app's OAuth flow — for personal use, run the OAuth flow manually once with your own account (see the [Todoist docs](https://developer.todoist.com/api/v1/#tag/Webhooks)). When a reminder fires, the worker fetches the task from the Todoist API using `TODOIST_API_TOKEN` and forwards it to Poke; tasks with the `ai` label are executed by Poke (which is instructed to mark them complete in Todoist afterwards), while the rest only trigger a warning to you.
 
