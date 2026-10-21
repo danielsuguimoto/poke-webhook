@@ -1164,3 +1164,153 @@ test("Composio authorize fails closed when the secret is not configured", async 
   assert.equal(res.status, 500);
   assert.equal((await res.json()).error, "missing_webhook_secret");
 });
+
+const { resend } = require("../.test-build/sources/resend.js");
+
+const RESEND_EMAIL_EVENT = {
+  type: "email.delivered",
+  created_at: "2026-10-20T12:00:00.000Z",
+  data: {
+    email_id: "56761188-7520-42d8-8898-ff6fc54ce618",
+    message_id: "<111-222-333@email.example.com>",
+    from: "Acme <onboarding@resend.dev>",
+    to: ["delivered@resend.dev"],
+    subject: "Sending this example",
+    created_at: "2026-10-20T11:59:59.000Z",
+  },
+};
+
+test("Resend email.* events forward sender, recipients and subject", async (t) => {
+  const message = await forwardedMessage(t, resend, RESEND_EMAIL_EVENT);
+  assert.equal(message, [
+    "[Resend] E-mail entregue ao servidor do destinatário:",
+    "De: Acme <onboarding@resend.dev>",
+    "Para: delivered@resend.dev",
+    "Assunto: Sending this example",
+    "E-mail: 56761188-7520-42d8-8898-ff6fc54ce618",
+    "Data e hora: 2026-10-20T12:00:00.000Z",
+  ].join("\n"));
+});
+
+test("Resend email.clicked includes the clicked link", async (t) => {
+  const message = await forwardedMessage(t, resend, {
+    type: "email.clicked",
+    created_at: "2026-10-20T12:05:00.000Z",
+    data: {
+      email_id: "email-1",
+      from: "sender@example.com",
+      to: ["user@example.com"],
+      subject: "Click me",
+      click: { link: "https://example.com/offer" },
+    },
+  });
+  assert.equal(message, [
+    "[Resend] Link de e-mail clicado:",
+    "De: sender@example.com",
+    "Para: user@example.com",
+    "Assunto: Click me",
+    "Link: https://example.com/offer",
+    "E-mail: email-1",
+    "Data e hora: 2026-10-20T12:05:00.000Z",
+  ].join("\n"));
+});
+
+test("Resend non-email events forward a summary plus event data", async (t) => {
+  const message = await forwardedMessage(t, resend, {
+    type: "domain.created",
+    created_at: "2026-10-20T12:10:00.000Z",
+    data: { id: "dom-1", name: "example.com" },
+  });
+  assert.equal(message, [
+    "[Resend] Domínio criado:",
+    "Domínio: example.com",
+    "Data e hora: 2026-10-20T12:10:00.000Z",
+    "",
+    "Dados:",
+    JSON.stringify({ id: "dom-1", name: "example.com" }, null, 2),
+  ].join("\n"));
+});
+
+test("Resend ignores unsupported event types and invalid payloads", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  for (const payload of [
+    { type: "email.unknown", created_at: "x", data: {} },
+    { created_at: "x", data: {} },
+  ]) {
+    const res = await resend.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+    assert.equal(res.status, 202);
+  }
+  for (const payload of [null, "text", 42, []]) {
+    const res = await resend.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+    assert.equal(res.status, 400);
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("Resend deduplicates retried deliveries", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  const payload = {
+    ...structuredClone(RESEND_EMAIL_EVENT),
+    created_at: "2026-10-20T13:00:00.000Z",
+    data: { ...RESEND_EMAIL_EVENT.data, email_id: "email-dedup-1" },
+  };
+  const first = await resend.handle(structuredClone(payload), env, ctx);
+  assert.equal(first.status, 200);
+  const second = await resend.handle(structuredClone(payload), env, ctx);
+  assert.equal(second.status, 202);
+  const third = await resend.handle(structuredClone(payload), env, ctx);
+  assert.equal(third.status, 202);
+  assert.equal(calls.length, 1);
+});
+
+async function resendSignature(secret, id, timestamp, body) {
+  const keyBytes = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
+  const key = await crypto.subtle.importKey(
+    "raw", keyBytes, { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
+  );
+  const sig = await crypto.subtle.sign(
+    "HMAC", key, new TextEncoder().encode(`${id}.${timestamp}.${body}`),
+  );
+  return Buffer.from(sig).toString("base64");
+}
+
+const RESEND_SECRET = `whsec_${Buffer.from("resend-secret").toString("base64")}`;
+
+async function resendAuthRequest(body, { id = "msg-1", timestamp, signature, secret = RESEND_SECRET } = {}) {
+  const ts = timestamp ?? Math.floor(Date.now() / 1000).toString();
+  const headers = { "svix-id": id, "svix-timestamp": ts };
+  if (signature !== null) {
+    headers["svix-signature"] = signature ?? `v1,${await resendSignature(secret, id, ts, body)}`;
+  }
+  return new Request("https://worker.test/resend", { method: "POST", headers });
+}
+
+test("Resend authorize verifies the Svix signature", async () => {
+  const body = JSON.stringify(RESEND_EMAIL_EVENT);
+  const env = { RESEND_WEBHOOK_SECRET: RESEND_SECRET };
+
+  assert.equal(await resend.authorize(body, await resendAuthRequest(body), env), null);
+
+  for (const [request, expected] of [
+    [await resendAuthRequest(body, { signature: null }), "missing_signature_headers"],
+    [new Request("https://worker.test/resend", { method: "POST" }), "missing_signature_headers"],
+    [await resendAuthRequest(body, { signature: "v1,ZGVhZGJlZWY=" }), "invalid_signature"],
+    [await resendAuthRequest(body, { secret: `whsec_${Buffer.from("other-secret").toString("base64")}` }), "invalid_signature"],
+    [await resendAuthRequest(body + " "), "invalid_signature"],
+    [await resendAuthRequest(body, { timestamp: (Math.floor(Date.now() / 1000) - 400).toString() }), "invalid_signature"],
+  ]) {
+    const res = await resend.authorize(body, request, env);
+    assert.equal(res.status, 401);
+    assert.equal((await res.json()).error, expected);
+  }
+});
+
+test("Resend authorize fails closed when the secret is not configured", async () => {
+  const res = await resend.authorize("{}", await resendAuthRequest("{}"), {});
+  assert.equal(res.status, 500);
+  assert.equal((await res.json()).error, "missing_webhook_secret");
+});

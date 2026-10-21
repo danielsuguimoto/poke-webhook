@@ -11,4 +11,5 @@ TODOIST_WEBHOOK_SECRET=your-todoist-client-secret
 TODOIST_API_TOKEN=your-todoist-api-token
 TINYFISH_API_KEY=your-tinyfish-api-key
 RAMBLE_WEBHOOK_SECRET=your-ramble-signing-secret
+RESEND_WEBHOOK_SECRET=whsec_your-resend-signing-secret
 SLACK_USER_ID=U0123ABC456  # optional: Composio Slack channel messages forward only when this user is mentioned
