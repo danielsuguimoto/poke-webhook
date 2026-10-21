@@ -1216,11 +1216,17 @@ test("Resend email.clicked includes the clicked link", async (t) => {
 });
 
 test("Resend non-email events forward a summary plus event data", async (t) => {
-  const message = await forwardedMessage(t, resend, {
+  const payload = {
     type: "domain.created",
     created_at: "2026-10-20T12:10:00.000Z",
     data: { id: "dom-1", name: "example.com" },
-  });
+  };
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => { calls.push({ url, options }); return Response.json({}); });
+  const res = await resend.handle(payload, { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+  assert.equal(res.status, 200);
+  assert.equal((await res.json()).event_id, "dom-1");
+  const message = JSON.parse(calls[0].options.body).message;
   assert.equal(message, [
     "[Resend] Domínio criado:",
     "Domínio: example.com",

@@ -136,7 +136,7 @@ export const resend: SourceHandler = {
       seenEvents.delete(dedupKey);
       return json(503, { error: "poke_forward_failed" });
     }
-    return accepted(eventType, str(data.email_id));
+    return accepted(eventType, str(data.email_id) || str(data.id) || str(data.inbox_id));
   },
 };
 
