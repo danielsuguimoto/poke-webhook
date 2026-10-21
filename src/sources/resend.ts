@@ -7,8 +7,8 @@ const DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
 const DEDUP_MAX_ENTRIES = 10_000;
 
 // Best-effort deduplication within a worker isolate, keyed on the event's
-// type, webhook `created_at` and object id: Resend retries a delivery with the
-// same svix-id and an identical body, while distinct events differ.
+// type, webhook `created_at` and event data: Resend retries a delivery with
+// the same svix-id and an identical body, while distinct events differ.
 const seenEvents = new Map<string, number>();
 // dedup key -> in-flight forward, so concurrent duplicate deliveries
 // share the first attempt's outcome instead of being acknowledged early.
@@ -114,11 +114,10 @@ export const resend: SourceHandler = {
       return ignored(eventType || "unknown", "");
     }
 
-    const dedupKey = [
-      eventType,
-      str(payload.created_at),
-      str(data.email_id) || str(data.id) || str(data.domain_id) || str(data.contact_id) || str(data.inbox_id),
-    ].join(":");
+    // Retries redeliver an identical body, so the full event data is the dedup
+    // key: two distinct events (e.g. clicks on different links of the same
+    // email in the same millisecond) are never collapsed as duplicates.
+    const dedupKey = `${eventType}:${str(payload.created_at)}:${JSON.stringify(data)}`;
 
     const pending = inFlight.get(dedupKey);
     if (pending) {
@@ -137,7 +136,7 @@ export const resend: SourceHandler = {
       seenEvents.delete(dedupKey);
       return json(503, { error: "poke_forward_failed" });
     }
-    return accepted(eventType, str(data.email_id) || dedupKey);
+    return accepted(eventType, str(data.email_id));
   },
 };
 

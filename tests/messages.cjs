@@ -1267,6 +1267,22 @@ test("Resend deduplicates retried deliveries", async (t) => {
   assert.equal(calls.length, 1);
 });
 
+test("Resend forwards distinct events sharing type, timestamp and email id", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const env = { POKE_API_KEY: "k" };
+  const ctx = { waitUntil: () => {} };
+  for (const link of ["https://example.com/a", "https://example.com/b"]) {
+    const res = await resend.handle({
+      type: "email.clicked",
+      created_at: "2026-10-20T14:00:00.000Z",
+      data: { email_id: "email-clicks-1", from: "s@example.com", to: ["u@example.com"], click: { link } },
+    }, env, ctx);
+    assert.equal(res.status, 200);
+  }
+  assert.equal(calls.length, 2);
+});
+
 async function resendSignature(secret, id, timestamp, body) {
   const keyBytes = Buffer.from(secret.replace(/^whsec_/, ""), "base64");
   const key = await crypto.subtle.importKey(
