@@ -30,7 +30,7 @@ export interface Env {
   PARALLEL_API_URL?: string;
   POKE_API_URL?: string;
   SLACK_USER_ID?: string;
-  SLACK_IGNORED_USER_IDS?: string;
+  SLACK_IGNORED_USER_ID?: string;
 }
 
 export interface SourceHandler {

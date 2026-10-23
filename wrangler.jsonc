@@ -7,11 +7,13 @@
     "enabled": true
   },
   "vars": {
-    "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message"
+    "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message",
+    "SLACK_IGNORED_USER_ID": "U01D45GTXRB"
   },
   "previews": {
     "vars": {
-      "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message"
+      "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message",
+      "SLACK_IGNORED_USER_ID": "U01D45GTXRB"
     }
   }
 }

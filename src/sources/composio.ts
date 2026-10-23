@@ -3,9 +3,6 @@ import { forwardToPoke, accepted, ignored } from "../poke";
 import { json } from "../utils";
 
 const TIMESTAMP_TOLERANCE_SECONDS = 300;
-// Slack senders whose own messages are never forwarded (e.g. the configured
-// user's outbound posts). SLACK_IGNORED_USER_IDS overrides this list.
-const DEFAULT_IGNORED_SLACK_USER_IDS = ["U01D45GTXRB"];
 const DEDUP_TTL_MS = 24 * 60 * 60 * 1000;
 const DEDUP_MAX_ENTRIES = 10_000;
 
@@ -84,9 +81,11 @@ export const composio: SourceHandler = {
     // Direct messages always forward, as does everything when SLACK_USER_ID
     // is not configured (there is nothing to match mentions against).
     const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
+    const ignoredSender = env.SLACK_IGNORED_USER_ID;
     if (
       triggerSlug.toUpperCase().includes("SLACK")
-      && ignoredSlackUserIds(env).has(senderUserId(data))
+      && ignoredSender
+      && ignoredSender === senderUserId(data)
     ) {
       return ignored(eventType, dedupId);
     }
@@ -142,14 +141,6 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 function str(v: unknown): string {
   return typeof v === "string" && v ? v : "";
-}
-
-// Ignored Slack senders: SLACK_IGNORED_USER_IDS (comma-separated) when set,
-// otherwise the built-in default list.
-function ignoredSlackUserIds(env: { SLACK_IGNORED_USER_IDS?: string }): Set<string> {
-  const configured = env.SLACK_IGNORED_USER_IDS;
-  if (configured === undefined) return new Set(DEFAULT_IGNORED_SLACK_USER_IDS);
-  return new Set(configured.split(",").map((id) => id.trim()).filter(Boolean));
 }
 
 // The sending user's ID on a Slack message payload: top-level `user`/`user_id`,
