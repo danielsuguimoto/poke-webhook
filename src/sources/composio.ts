@@ -82,9 +82,12 @@ export const composio: SourceHandler = {
     // when SLACK_USER_ID is not configured.
     const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
     const slug = triggerSlug.toUpperCase();
+    // Message-shaped event: explicit `type: "message"`, or a message/DM trigger
+    // slug carrying message text (reactions and other event types have none).
+    const messageSlug = slug.includes("MESSAGE") || /(^|_)DM(_|$)/.test(slug);
     if (
       slug.includes("SLACK")
-      && (slug.includes("MESSAGE") || /(^|_)DM(_RECEIVED)?$/.test(slug) || isSlackMessagePayload(data))
+      && (isSlackMessagePayload(data) || (messageSlug && hasMessageText(data)))
       && env.SLACK_USER_ID
       && env.SLACK_USER_ID === senderUserId(data)
     ) {
@@ -148,9 +151,27 @@ function str(v: unknown): string {
 // on a nested `event`/`message` envelope. Reactions and other event types that
 // happen to carry channel/user fields are not messages.
 function isSlackMessagePayload(data: Record<string, unknown>): boolean {
-  for (const container of [data, data.event, data.message]) {
+  for (const container of messageContainers(data)) {
     if (!container || typeof container !== "object" || Array.isArray(container)) continue;
     if (str((container as Record<string, unknown>).type) === "message") return true;
+  }
+  return false;
+}
+
+// The payload and the envelopes a Slack message can be nested inside.
+function messageContainers(data: Record<string, unknown>): unknown[] {
+  const event = data.event && typeof data.event === "object" && !Array.isArray(data.event)
+    ? (data.event as Record<string, unknown>)
+    : undefined;
+  return [data, data.event, data.message, event?.message];
+}
+
+// True when the payload carries message text on itself or a nested
+// `event`/`message` envelope. Reactions and other non-message events do not.
+function hasMessageText(data: Record<string, unknown>): boolean {
+  for (const container of messageContainers(data)) {
+    if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+    if (typeof (container as Record<string, unknown>).text === "string") return true;
   }
   return false;
 }
@@ -159,17 +180,11 @@ function isSlackMessagePayload(data: Record<string, unknown>): boolean {
 // payload or on a nested `event`/`message` envelope (e.g. message_changed
 // carries the sender at `data.event.message.user`).
 function senderUserId(data: Record<string, unknown>): string {
-  const queue: unknown[] = [data];
-  for (const container of queue) {
+  for (const container of messageContainers(data)) {
     if (!container || typeof container !== "object" || Array.isArray(container)) continue;
     const record = container as Record<string, unknown>;
     const id = str(record.user) || str(record.user_id);
     if (id) return id;
-    if (container !== data) continue;
-    queue.push(record.event, record.message);
-    if (record.event && typeof record.event === "object" && !Array.isArray(record.event)) {
-      queue.push((record.event as Record<string, unknown>).message);
-    }
   }
   return "";
 }

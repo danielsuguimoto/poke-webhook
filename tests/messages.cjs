@@ -1121,6 +1121,7 @@ test("Composio drops Slack messages sent by the configured user", async (t) => {
     ["evt-comp-self-nested-msg", "SLACK_MESSAGE_CHANGED", { event: { type: "message", message: { user: "U01D45GTXRB", text: "edited" } } }],
     // A DM trigger slug without "MESSAGE" still counts as a message.
     ["evt-comp-self-dm-slug", "SLACK_DM_RECEIVED", { channel_type: "im", user: "U01D45GTXRB", text: "note to self" }],
+    ["evt-comp-self-dm-sent", "SLACK_DM_SENT", { user: "U01D45GTXRB", text: "outbound note" }],
   ]) {
     const res = await composio.handle(structuredClone({
       ...COMPOSIO_SLACK_CHANNEL_EVENT,
