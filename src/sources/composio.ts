@@ -76,16 +76,15 @@ export const composio: SourceHandler = {
       : {};
     const dedupId = eventId || str(metadata.log_id);
 
-    // Slack channel messages are only relevant when the configured user is
-    // mentioned; acknowledge without forwarding so Composio does not retry.
-    // Direct messages always forward, as does everything when SLACK_USER_ID
-    // is not configured (there is nothing to match mentions against).
+    // Messages sent by the configured user (outbound posts/DMs) are never
+    // forwarded; channel messages from others are only relevant when that
+    // user is mentioned; direct messages always forward, as does everything
+    // when SLACK_USER_ID is not configured.
     const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
-    const ignoredSender = env.SLACK_IGNORED_USER_ID;
     if (
       triggerSlug.toUpperCase().includes("SLACK")
-      && ignoredSender
-      && ignoredSender === senderUserId(data)
+      && env.SLACK_USER_ID
+      && env.SLACK_USER_ID === senderUserId(data)
     ) {
       return ignored(eventType, dedupId);
     }
