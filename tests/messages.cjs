@@ -1155,6 +1155,14 @@ test("Composio still forwards the configured user's non-message Slack events", a
     data: { user: "U01D45GTXRB", channel_type: "im", type: "reaction_added", reaction: "+1", item: { type: "message", channel: "C123", ts: "1.2" } },
   });
   assert.match(message, /SLACK_REACTION_ADDED/);
+
+  const dmReaction = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-self-dm-reaction",
+    metadata: { log_id: "log-self-dm-reaction", trigger_slug: "SLACK_DM_REACTION_ADDED" },
+    data: { user: "U01D45GTXRB", channel_type: "im", type: "reaction_added", reaction: "+1", item: { type: "message", channel: "D123", ts: "1.2" } },
+  });
+  assert.match(dmReaction, /SLACK_DM_REACTION_ADDED/);
 });
 
 test("Composio still forwards non-Slack events from an ignored user id", async (t) => {

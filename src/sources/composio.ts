@@ -84,7 +84,7 @@ export const composio: SourceHandler = {
     const slug = triggerSlug.toUpperCase();
     if (
       slug.includes("SLACK")
-      && (slug.includes("MESSAGE") || slug.includes("DIRECT_MESSAGE") || /(^|_)DM(_|$)/.test(slug) || isSlackMessagePayload(data))
+      && (slug.includes("MESSAGE") || /(^|_)DM(_RECEIVED)?$/.test(slug) || isSlackMessagePayload(data))
       && env.SLACK_USER_ID
       && env.SLACK_USER_ID === senderUserId(data)
     ) {
