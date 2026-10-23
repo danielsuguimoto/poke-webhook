@@ -76,11 +76,23 @@ export const composio: SourceHandler = {
       : {};
     const dedupId = eventId || str(metadata.log_id);
 
-    // Slack channel messages are only relevant when the configured user is
-    // mentioned; acknowledge without forwarding so Composio does not retry.
-    // Direct messages always forward, as does everything when SLACK_USER_ID
-    // is not configured (there is nothing to match mentions against).
+    // Messages sent by the configured user (outbound posts/DMs) are never
+    // forwarded; channel messages from others are only relevant when that
+    // user is mentioned; direct messages always forward, as does everything
+    // when SLACK_USER_ID is not configured.
     const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
+    const slug = triggerSlug.toUpperCase();
+    // Message-shaped event: explicit `type: "message"`, or a message/DM trigger
+    // slug carrying message text (reactions and other event types have none).
+    const messageSlug = slug.includes("MESSAGE") || /(^|_)DM(_|$)/.test(slug);
+    if (
+      slug.includes("SLACK")
+      && (isSlackMessagePayload(data) || (messageSlug && hasMessageText(data)))
+      && env.SLACK_USER_ID
+      && env.SLACK_USER_ID === senderUserId(data)
+    ) {
+      return ignored(eventType, dedupId);
+    }
     if (
       env.SLACK_USER_ID
       && isChannelMessageTrigger(triggerSlug, data)
@@ -133,6 +145,48 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 function str(v: unknown): string {
   return typeof v === "string" && v ? v : "";
+}
+
+// True when the event is a Slack message: `type: "message"` on the payload or
+// on a nested `event`/`message` envelope. Reactions and other event types that
+// happen to carry channel/user fields are not messages.
+function isSlackMessagePayload(data: Record<string, unknown>): boolean {
+  for (const container of messageContainers(data)) {
+    if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+    if (str((container as Record<string, unknown>).type) === "message") return true;
+  }
+  return false;
+}
+
+// The payload and the envelopes a Slack message can be nested inside.
+function messageContainers(data: Record<string, unknown>): unknown[] {
+  const event = data.event && typeof data.event === "object" && !Array.isArray(data.event)
+    ? (data.event as Record<string, unknown>)
+    : undefined;
+  return [data, data.event, data.message, event?.message];
+}
+
+// True when the payload carries message text on itself or a nested
+// `event`/`message` envelope. Reactions and other non-message events do not.
+function hasMessageText(data: Record<string, unknown>): boolean {
+  for (const container of messageContainers(data)) {
+    if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+    if (typeof (container as Record<string, unknown>).text === "string") return true;
+  }
+  return false;
+}
+
+// The sending user's ID on a Slack message payload: `user`/`user_id` on the
+// payload or on a nested `event`/`message` envelope (e.g. message_changed
+// carries the sender at `data.event.message.user`).
+function senderUserId(data: Record<string, unknown>): string {
+  for (const container of messageContainers(data)) {
+    if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+    const record = container as Record<string, unknown>;
+    const id = str(record.user) || str(record.user_id);
+    if (id) return id;
+  }
+  return "";
 }
 
 // Channel-message triggers (e.g. SLACK_CHANNEL_MESSAGE_RECEIVED) are gated on

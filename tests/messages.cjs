@@ -1106,6 +1106,75 @@ test("Composio forwards all Slack direct messages without a mention", async (t) 
   assert.match(message, /SLACK_DIRECT_MESSAGE_RECEIVED/);
 });
 
+test("Composio drops Slack messages sent by the configured user", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const env = { POKE_API_KEY: "k", SLACK_USER_ID: "U01D45GTXRB" };
+  for (const [id, slug, data] of [
+    // Outbound channel post that mentions someone — dropped before mention gating.
+    ["evt-comp-self-chan", "SLACK_CHANNEL_MESSAGE_RECEIVED", { channel_type: "channel", user: "U01D45GTXRB", text: "hi <@U999OTHER>" }],
+    // Outbound DM — dropped even though direct messages always forward.
+    ["evt-comp-self-dm", "SLACK_DIRECT_MESSAGE_RECEIVED", { channel_type: "im", user_id: "U01D45GTXRB", text: "note to self" }],
+    // Sender on a nested envelope (e.g. message_changed).
+    ["evt-comp-self-nested", "SLACK_MESSAGE_CHANGED", { channel_type: "channel", event: { user: "U01D45GTXRB", text: "edited" } }],
+    // Sender on the message inside the event envelope.
+    ["evt-comp-self-nested-msg", "SLACK_MESSAGE_CHANGED", { event: { type: "message", message: { user: "U01D45GTXRB", text: "edited" } } }],
+    // A DM trigger slug without "MESSAGE" still counts as a message.
+    ["evt-comp-self-dm-slug", "SLACK_DM_RECEIVED", { channel_type: "im", user: "U01D45GTXRB", text: "note to self" }],
+    ["evt-comp-self-dm-sent", "SLACK_DM_SENT", { user: "U01D45GTXRB", text: "outbound note" }],
+  ]) {
+    const res = await composio.handle(structuredClone({
+      ...COMPOSIO_SLACK_CHANNEL_EVENT,
+      id,
+      metadata: { log_id: `log-${id}`, trigger_slug: slug },
+      data,
+    }), env, { waitUntil: () => {} });
+    assert.equal(res.status, 202);
+    assert.equal((await res.json()).status, "ignored");
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("Composio does not drop senders when SLACK_USER_ID is unset", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const res = await composio.handle(structuredClone({
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-ign-unset",
+    metadata: { log_id: "log-ign-unset", trigger_slug: "SLACK_DIRECT_MESSAGE_RECEIVED" },
+    data: { channel_type: "im", user: "U01D45GTXRB", text: "through" },
+  }), { POKE_API_KEY: "k" }, { waitUntil: () => {} });
+  assert.equal(res.status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test("Composio still forwards the configured user's non-message Slack events", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-self-reaction",
+    metadata: { log_id: "log-self-reaction", trigger_slug: "SLACK_REACTION_ADDED" },
+    data: { user: "U01D45GTXRB", channel_type: "im", type: "reaction_added", reaction: "+1", item: { type: "message", channel: "C123", ts: "1.2" } },
+  });
+  assert.match(message, /SLACK_REACTION_ADDED/);
+
+  const dmReaction = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-self-dm-reaction",
+    metadata: { log_id: "log-self-dm-reaction", trigger_slug: "SLACK_DM_REACTION_ADDED" },
+    data: { user: "U01D45GTXRB", channel_type: "im", type: "reaction_added", reaction: "+1", item: { type: "message", channel: "D123", ts: "1.2" } },
+  });
+  assert.match(dmReaction, /SLACK_DM_REACTION_ADDED/);
+});
+
+test("Composio still forwards non-Slack events from an ignored user id", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_EVENT,
+    id: "evt-comp-nonself",
+    data: { user: "U01D45GTXRB", subject: "not slack" },
+  });
+  assert.match(message, /GMAIL_NEW_GMAIL_MESSAGE/);
+});
+
 async function composioSignature(secret, id, timestamp, body) {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],
