@@ -1117,6 +1117,8 @@ test("Composio drops Slack messages sent by the configured user", async (t) => {
     ["evt-comp-self-dm", "SLACK_DIRECT_MESSAGE_RECEIVED", { channel_type: "im", user_id: "U01D45GTXRB", text: "note to self" }],
     // Sender on a nested envelope (e.g. message_changed).
     ["evt-comp-self-nested", "SLACK_MESSAGE_CHANGED", { channel_type: "channel", event: { user: "U01D45GTXRB", text: "edited" } }],
+    // Sender on the message inside the event envelope.
+    ["evt-comp-self-nested-msg", "SLACK_MESSAGE_CHANGED", { event: { type: "message", message: { user: "U01D45GTXRB", text: "edited" } } }],
   ]) {
     const res = await composio.handle(structuredClone({
       ...COMPOSIO_SLACK_CHANNEL_EVENT,
@@ -1141,6 +1143,16 @@ test("Composio does not drop senders when SLACK_USER_ID is unset", async (t) => 
   }), { POKE_API_KEY: "k" }, { waitUntil: () => {} });
   assert.equal(res.status, 200);
   assert.equal(calls.length, 1);
+});
+
+test("Composio still forwards the configured user's non-message Slack events", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-self-reaction",
+    metadata: { log_id: "log-self-reaction", trigger_slug: "SLACK_REACTION_ADDED" },
+    data: { user: "U01D45GTXRB", reaction: "+1", item: { type: "message", channel: "C123", ts: "1.2" } },
+  });
+  assert.match(message, /SLACK_REACTION_ADDED/);
 });
 
 test("Composio still forwards non-Slack events from an ignored user id", async (t) => {

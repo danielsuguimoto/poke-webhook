@@ -81,8 +81,10 @@ export const composio: SourceHandler = {
     // user is mentioned; direct messages always forward, as does everything
     // when SLACK_USER_ID is not configured.
     const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
+    const slug = triggerSlug.toUpperCase();
     if (
-      triggerSlug.toUpperCase().includes("SLACK")
+      slug.includes("SLACK")
+      && (slug.includes("MESSAGE") || str(data.type) === "message" || !!str(data.channel_type))
       && env.SLACK_USER_ID
       && env.SLACK_USER_ID === senderUserId(data)
     ) {
@@ -142,14 +144,21 @@ function str(v: unknown): string {
   return typeof v === "string" && v ? v : "";
 }
 
-// The sending user's ID on a Slack message payload: top-level `user`/`user_id`,
-// or the same fields on a nested `event`/`message` envelope (e.g. message_changed).
+// The sending user's ID on a Slack message payload: `user`/`user_id` on the
+// payload or on a nested `event`/`message` envelope (e.g. message_changed
+// carries the sender at `data.event.message.user`).
 function senderUserId(data: Record<string, unknown>): string {
-  for (const container of [data, data.event, data.message]) {
+  const queue: unknown[] = [data];
+  for (const container of queue) {
     if (!container || typeof container !== "object" || Array.isArray(container)) continue;
     const record = container as Record<string, unknown>;
     const id = str(record.user) || str(record.user_id);
     if (id) return id;
+    if (container !== data) continue;
+    queue.push(record.event, record.message);
+    if (record.event && typeof record.event === "object" && !Array.isArray(record.event)) {
+      queue.push((record.event as Record<string, unknown>).message);
+    }
   }
   return "";
 }
