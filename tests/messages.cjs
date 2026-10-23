@@ -1106,6 +1106,65 @@ test("Composio forwards all Slack direct messages without a mention", async (t) 
   assert.match(message, /SLACK_DIRECT_MESSAGE_RECEIVED/);
 });
 
+test("Composio drops Slack messages sent by an ignored user by default", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const env = { POKE_API_KEY: "k", SLACK_USER_ID: "U01D45GTXRB" };
+  for (const [id, slug, data] of [
+    // Outbound channel post that mentions someone — dropped before mention gating.
+    ["evt-comp-self-chan", "SLACK_CHANNEL_MESSAGE_RECEIVED", { channel_type: "channel", user: "U01D45GTXRB", text: "hi <@U999OTHER>" }],
+    // Outbound DM — dropped even though direct messages always forward.
+    ["evt-comp-self-dm", "SLACK_DIRECT_MESSAGE_RECEIVED", { channel_type: "im", user_id: "U01D45GTXRB", text: "note to self" }],
+    // Sender on a nested envelope (e.g. message_changed).
+    ["evt-comp-self-nested", "SLACK_MESSAGE_CHANGED", { channel_type: "channel", event: { user: "U01D45GTXRB", text: "edited" } }],
+  ]) {
+    const res = await composio.handle(structuredClone({
+      ...COMPOSIO_SLACK_CHANNEL_EVENT,
+      id,
+      metadata: { log_id: `log-${id}`, trigger_slug: slug },
+      data,
+    }), env, { waitUntil: () => {} });
+    assert.equal(res.status, 202);
+    assert.equal((await res.json()).status, "ignored");
+  }
+  assert.equal(calls.length, 0);
+});
+
+test("Composio honors SLACK_IGNORED_USER_IDS as the full ignore list", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url) => { calls.push(url); return Response.json({}); });
+  const ctx = { waitUntil: () => {} };
+  const env = { POKE_API_KEY: "k", SLACK_IGNORED_USER_IDS: " U999 ,U888 " };
+
+  // A configured ignored sender is dropped (whitespace-tolerant list).
+  const res = await composio.handle(structuredClone({
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-ign-cfg",
+    metadata: { log_id: "log-ign-cfg", trigger_slug: "SLACK_DIRECT_MESSAGE_RECEIVED" },
+    data: { channel_type: "im", user: "U999", text: "shh" },
+  }), env, ctx);
+  assert.equal(res.status, 202);
+
+  // The list replaces the default: the default ID is no longer ignored.
+  const res2 = await composio.handle(structuredClone({
+    ...COMPOSIO_SLACK_CHANNEL_EVENT,
+    id: "evt-comp-ign-override",
+    metadata: { log_id: "log-ign-override", trigger_slug: "SLACK_DIRECT_MESSAGE_RECEIVED" },
+    data: { channel_type: "im", user: "U01D45GTXRB", text: "through" },
+  }), env, ctx);
+  assert.equal(res2.status, 200);
+  assert.equal(calls.length, 1);
+});
+
+test("Composio still forwards non-Slack events from an ignored user id", async (t) => {
+  const message = await forwardedMessage(t, composio, {
+    ...COMPOSIO_EVENT,
+    id: "evt-comp-nonself",
+    data: { user: "U01D45GTXRB", subject: "not slack" },
+  });
+  assert.match(message, /GMAIL_NEW_GMAIL_MESSAGE/);
+});
+
 async function composioSignature(secret, id, timestamp, body) {
   const key = await crypto.subtle.importKey(
     "raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"],

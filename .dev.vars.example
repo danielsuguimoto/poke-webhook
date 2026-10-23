@@ -13,3 +13,4 @@ TINYFISH_API_KEY=your-tinyfish-api-key
 RAMBLE_WEBHOOK_SECRET=your-ramble-signing-secret
 RESEND_WEBHOOK_SECRET=whsec_your-resend-signing-secret
 SLACK_USER_ID=U0123ABC456  # optional: Composio Slack channel messages forward only when this user is mentioned
+# SLACK_IGNORED_USER_IDS=U0123ABC456,U0456DEF789  # optional: comma-separated Slack senders whose own messages are never forwarded; defaults to U01D45GTXRB
