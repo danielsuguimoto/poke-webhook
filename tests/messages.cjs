@@ -1150,7 +1150,7 @@ test("Composio still forwards the configured user's non-message Slack events", a
     ...COMPOSIO_SLACK_CHANNEL_EVENT,
     id: "evt-comp-self-reaction",
     metadata: { log_id: "log-self-reaction", trigger_slug: "SLACK_REACTION_ADDED" },
-    data: { user: "U01D45GTXRB", reaction: "+1", item: { type: "message", channel: "C123", ts: "1.2" } },
+    data: { user: "U01D45GTXRB", channel_type: "channel", type: "reaction_added", reaction: "+1", item: { type: "message", channel: "C123", ts: "1.2" } },
   });
   assert.match(message, /SLACK_REACTION_ADDED/);
 });

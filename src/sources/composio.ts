@@ -84,7 +84,7 @@ export const composio: SourceHandler = {
     const slug = triggerSlug.toUpperCase();
     if (
       slug.includes("SLACK")
-      && (slug.includes("MESSAGE") || str(data.type) === "message" || !!str(data.channel_type))
+      && (slug.includes("MESSAGE") || isSlackMessagePayload(data))
       && env.SLACK_USER_ID
       && env.SLACK_USER_ID === senderUserId(data)
     ) {
@@ -142,6 +142,17 @@ function constantTimeEqual(a: string, b: string): boolean {
 
 function str(v: unknown): string {
   return typeof v === "string" && v ? v : "";
+}
+
+// True when the event is a Slack message: `type: "message"` on the payload or
+// on a nested `event`/`message` envelope. Reactions and other event types that
+// happen to carry channel/user fields are not messages.
+function isSlackMessagePayload(data: Record<string, unknown>): boolean {
+  for (const container of [data, data.event, data.message]) {
+    if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+    if (str((container as Record<string, unknown>).type) === "message") return true;
+  }
+  return false;
 }
 
 // The sending user's ID on a Slack message payload: `user`/`user_id` on the
