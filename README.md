@@ -11,6 +11,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
 | `POST /composio` | [Composio](https://docs.composio.dev/docs/setting-up-triggers/subscribing-to-events) | `composio.trigger.message` (V3 envelope) — `metadata.trigger_slug` and `data` are forwarded; other project event types and legacy V1/V2 envelopes are ignored. Slack channel messages (e.g. `SLACK_CHANNEL_MESSAGE_RECEIVED`) forward only when the `SLACK_USER_ID` user is mentioned; direct messages always forward |
 | `POST /goal-api` | [GOAL API](https://goal-api.com/documentation#webhooks) | `match.started`, `match.finished`, `goal.scored`, `score.changed`, `match.status_changed` — the full payload is forwarded as JSON |
+| `POST /location-tracker` | [Location Tracker](https://github.com/danielsuguimoto/location-tracker) | Geofence `enter`, `exit`, `test` — activity context for location-based reminders; tests are explicitly labeled, not treated as real movement |
 | `POST /parallel` | [Parallel](https://docs.parallel.ai/task-api/webhooks) | `task_run.status` — the run input is fetched via `GET /v1/tasks/runs/{run_id}/input` and the result via `GET /v1/tasks/runs/{run_id}/result` (completed runs) and forwarded |
 | `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
 | `POST /ramble` | [Ramble](https://goodloop.dev/ramble/docs) | Finished recordings — the transcript is forwarded; deliveries are deduplicated by `recording_id` (test payloads are always forwarded) |
@@ -23,7 +24,7 @@ Other event types are acknowledged with `202` and not forwarded (Todoist gets `2
 ## How it works
 
 1. A tool POSTs an event to its source-specific path on the Worker URL.
-2. The source handler verifies the request signature (AgentMail and Resend sign webhooks via Svix; see the [AgentMail](https://docs.agentmail.to/webhook-verification) and [Resend](https://resend.com/docs/dashboard/webhooks/verify-webhooks-requests) verification docs).
+2. The source handler authenticates the request (signature, shared secret, or provider verification depending on the source; AgentMail and Resend sign webhooks via Svix — see the [AgentMail](https://docs.agentmail.to/webhook-verification) and [Resend](https://resend.com/docs/dashboard/webhooks/verify-webhooks-requests) verification docs).
 3. The source handler translates the payload into a plain-text `message` string.
 4. The message is forwarded to `POST $POKE_API_URL` with `Authorization: Bearer $POKE_API_KEY`.
 5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`.
@@ -51,6 +52,7 @@ Set via `wrangler secret put` (production) or `.dev.vars` (local dev, see `.dev.
 | `CIRCLEBACK_WEBHOOK_SECRET` | Circleback webhook signing secret, provided when configuring a webhook automation |
 | `COMPOSIO_WEBHOOK_SECRET` | Composio webhook subscription secret, from the project's webhook settings; verifies `webhook-signature` (Standard Webhooks scheme) |
 | `GOAL_API_WEBHOOK_SECRET` | GOAL API endpoint signing secret, shown once when creating a webhook endpoint in the [dashboard](https://goal-api.com/dashboard/webhooks); verifies `X-Goal-Signature` |
+| `LOCATION_TRACKER_WEBHOOK_SECRET` | Required shared bearer token you choose; must match Location Tracker's endpoint `token` (`webhook_token` via MCP). Verifies `Authorization: Bearer <token>`; unset = fail closed |
 | `PARALLEL_WEBHOOK_SECRET` | Parallel account webhook secret (`whsec_...`), from Settings → Webhooks on [platform.parallel.ai](https://platform.parallel.ai); verifies `webhook-signature` (Standard Webhooks) |
 | `PARALLEL_API_KEY` | Parallel API key; used to fetch the run input and result when a `task_run.status` event arrives |
 | `PLUGGY_WEBHOOK_SECRET` | Shared secret you choose; Pluggy sends it as the `x-webhook-secret` header |
@@ -67,6 +69,7 @@ wrangler secret put ANAKIN_WEBHOOK_SECRET
 wrangler secret put CIRCLEBACK_WEBHOOK_SECRET
 wrangler secret put COMPOSIO_WEBHOOK_SECRET
 wrangler secret put GOAL_API_WEBHOOK_SECRET
+wrangler secret put LOCATION_TRACKER_WEBHOOK_SECRET
 wrangler secret put PARALLEL_WEBHOOK_SECRET
 wrangler secret put PARALLEL_API_KEY
 wrangler secret put PLUGGY_WEBHOOK_SECRET
@@ -110,6 +113,35 @@ Set the same value as `PLUGGY_WEBHOOK_SECRET`. For extra security you can also w
 Example for Composio. Webhook subscriptions are configured once per project — in the [Composio dashboard](https://platform.composio.dev) (Project Settings → Webhooks) or via the API, set the payload URL to `https://<your-worker>.workers.dev/composio` and copy the generated webhook secret into `COMPOSIO_WEBHOOK_SECRET`. Only trigger instances that are enabled/active send events, so enable each trigger you want. Deliveries use the V3 envelope `{id, type: "composio.trigger.message", metadata: {trigger_slug, trigger_id, connected_account_id, ...}, data, timestamp}` and are signed per the [Standard Webhooks](https://www.standardwebhooks.com/) scheme: `webhook-signature: v1,<base64 HMAC-SHA256>` over `${webhook-id}.${webhook-timestamp}.${rawBody}`, with timestamps older than five minutes rejected. Other project events sent to the same URL (e.g. connection lifecycle events) and legacy V1/V2 envelopes are acknowledged with `202` and not forwarded. Slack channel-message triggers (`SLACK_CHANNEL_MESSAGE_RECEIVED` and other channel-message slugs) are forwarded only when the payload mentions the `SLACK_USER_ID` user — the check scans `data` recursively, covering both the `<@U...>` mention form in text and `user`/`user_id` fields in rich_text blocks; unmentioned channel messages are acknowledged with `202` so Composio does not retry. Direct messages (`SLACK_DIRECT_MESSAGE_RECEIVED`) always forward, and when `SLACK_USER_ID` is not configured everything forwards. Independently of mentions, Slack messages sent by the `SLACK_USER_ID` user (sender `user`/`user_id`, including nested `event`/`message` envelopes) are dropped with `202` and never forwarded. Deliveries are deduplicated by event `id`, and a Poke forward failure returns `503` so Composio redelivers.
 
 Example for GOAL API. Create the endpoint in the [webhooks dashboard](https://goal-api.com/dashboard/webhooks) pointing at `https://<your-worker>.workers.dev/goal-api`, select the events and (optionally) `leagueIds` to filter competitions. The signing secret is shown once at creation — copy it into `GOAL_API_WEBHOOK_SECRET`. Deliveries are signed via `X-Goal-Signature: t=<ts>,v1=<hmac-sha256 hex>` over `<ts>.<raw body>`, and signatures older than five minutes are rejected.
+
+### Location Tracker geofence notifications
+
+1. Generate a strong random shared token (for example, `openssl rand -hex 32`), and store it as the Worker's `LOCATION_TRACKER_WEBHOOK_SECRET` using `wrangler secret put LOCATION_TRACKER_WEBHOOK_SECRET`. Set `POKE_API_KEY` separately; the inbound token is **not** the Poke API key. For local dev, copy `.dev.vars.example` to `.dev.vars` and replace the placeholders. Never commit real tokens. Preview secrets must be configured separately (see [Cloudflare Workers Builds](#cloudflare-workers-builds)).
+2. In Location Tracker's admin UI (`/admin/webhooks`), add an endpoint with URL `https://<your-worker>.workers.dev/location-tracker` and set **Bearer token** to the same shared token. Attach geofences to this endpoint. Alternatively, use Location Tracker's MCP `register_geofence` with that URL as `webhook_url` and the token as `webhook_token`, or reuse an endpoint via `webhook_id`.
+3. Send a test using the geofence's admin test action or MCP `test_geofence_notification`. It should return HTTP `200` from this Worker, and Poke should receive a clearly labeled test notice. A test is not a real arrival/departure and should not trigger movement-based reminders.
+
+Location Tracker POSTs JSON with `Content-Type: application/json` and `Authorization: Bearer <webhook.token>`:
+
+```json
+{
+  "event": "enter",
+  "geofence": {"id": "fence-1", "name": "home", "lat": -23.5, "lon": -46.6, "radius_m": 200},
+  "location": {"lat": -23.501, "lon": -46.601, "acc": 5, "tst": 1700000000, "device": "JJ"},
+  "message": "Jun arrived at \"home\"",
+  "timestamp": 1700000000
+}
+```
+
+- `event` is `enter`, `exit`, or `test`. All three are forwarded. Unknown event types receive `202` and are not forwarded.
+- `geofence` contains the nonempty string `id` and `name`, numeric `lat`/`lon` coordinates and positive numeric `radius_m` (meters).
+- `location` is either `null` (for example, a test before any location exists) or an object with numeric `lat`/`lon`, `acc` (nonnegative meters or `null`), `tst` (Unix seconds), and `device` (string or `null`). Null location is accepted for every event. Latitude/longitude must be within ±90/±180 degrees.
+- `message` is a string preserved in its original language. `timestamp` is the delivery/event creation time in Unix seconds; `location.tst` is the device fix time, which may be older. Both must be nonnegative integers representable as dates; rendered timestamps use ISO 8601 UTC, not milliseconds or local time. Additional fields are ignored.
+
+The Poke message has Portuguese labels for arrival/departure/test, geofence name/ID, center/radius, event time, original message, and available location/accuracy/device/fix time. Enter/exit provide activity context for relevant location-based reminders; the Worker does not create reminders or query a task list. Test messages explicitly say no real entry or exit occurred. No person/device identifier is hardcoded in the handler.
+
+Although Location Tracker allows tokenless endpoints, **this receiver requires a bearer token**: missing Worker secret returns `500`; missing, malformed, or mismatched authorization returns `401` before JSON parsing; malformed JSON or known-event payloads return `400`. Accepted responses are `200` with `{"status":"accepted","event_type":"enter","event_id":"fence-1"}` (`event_id` is the geofence ID, not a unique delivery ID).
+
+Forwarding uses the existing `forwardToPoke` helper and `ctx.waitUntil`: acceptance does not guarantee downstream delivery. Poke failures are logged; there is no retry queue. Location Tracker currently attempts delivery once with a five-second timeout and logs the response in its delivery log. No deduplication or timestamp freshness/replay window is imposed here: upstream supplies no unique delivery ID, timestamps have second precision, and tests can refer to older location fixes. Repeated POSTs are forwarded again.
 
 Example for TinyFish. Pass `webhook_url` when creating a run (must be HTTPS):
 

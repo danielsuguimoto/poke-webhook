@@ -5,6 +5,7 @@ import { anakin } from "./sources/anakin";
 import { circleback } from "./sources/circleback";
 import { composio } from "./sources/composio";
 import { goalApi } from "./sources/goal-api";
+import { locationTracker } from "./sources/location-tracker";
 import { parallel } from "./sources/parallel";
 import { pluggy } from "./sources/pluggy";
 import { ramble } from "./sources/ramble";
@@ -19,6 +20,7 @@ export interface Env {
   CIRCLEBACK_WEBHOOK_SECRET: string;
   COMPOSIO_WEBHOOK_SECRET: string;
   GOAL_API_WEBHOOK_SECRET: string;
+  LOCATION_TRACKER_WEBHOOK_SECRET: string;
   PARALLEL_WEBHOOK_SECRET: string;
   PARALLEL_API_KEY: string;
   PLUGGY_WEBHOOK_SECRET: string;
@@ -47,6 +49,7 @@ const ROUTES: Record<string, SourceHandler> = {
   "/circleback": circleback,
   "/composio": composio,
   "/goal-api": goalApi,
+  "/location-tracker": locationTracker,
   "/parallel": parallel,
   "/pluggy": pluggy,
   "/ramble": ramble,

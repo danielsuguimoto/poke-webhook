@@ -4,6 +4,7 @@ ANAKIN_WEBHOOK_SECRET=whsec_your-anakin-signing-secret
 CIRCLEBACK_WEBHOOK_SECRET=your-circleback-signing-secret
 COMPOSIO_WEBHOOK_SECRET=your-composio-webhook-secret
 GOAL_API_WEBHOOK_SECRET=your-goal-api-signing-secret
+LOCATION_TRACKER_WEBHOOK_SECRET=your-location-tracker-bearer-token
 PARALLEL_WEBHOOK_SECRET=whsec_your-parallel-webhook-secret
 PARALLEL_API_KEY=your-parallel-api-key
 PLUGGY_WEBHOOK_SECRET=your-pluggy-shared-secret
