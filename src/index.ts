@@ -1,4 +1,4 @@
-import type { ExecutionContext } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace, ExecutionContext } from "@cloudflare/workers-types";
 import { json } from "./utils";
 import { agentmail } from "./sources/agentmail";
 import { anakin } from "./sources/anakin";
@@ -29,10 +29,14 @@ export interface Env {
   TODOIST_WEBHOOK_SECRET: string;
   TODOIST_API_TOKEN: string;
   TINYFISH_API_KEY: string;
+  SLACK_DM_BUFFER?: DurableObjectNamespace;
   PARALLEL_API_URL?: string;
   POKE_API_URL?: string;
   SLACK_USER_ID?: string;
+  SLACK_DM_DEBOUNCE_SECONDS?: string;
 }
+
+export { SlackDebounceBuffer } from "./debounce";
 
 export interface SourceHandler {
   authorize?(rawBody: string, request: Request, env: Env): Promise<Response | null> | Response | null;
