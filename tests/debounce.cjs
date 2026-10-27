@@ -11,20 +11,24 @@ function mockState() {
   return {
     alarms,
     storage: {
-      get: async (key) => store.get(key),
-      put: async (key, value) => { store.set(key, value); },
+      // structuredClone mirrors real DO storage, which returns deserialized
+      // copies — callers can't mutate each other's in-flight reads.
+      get: async (key) => structuredClone(store.get(key)),
+      put: async (key, value) => { store.set(key, structuredClone(value)); },
+      delete: async (key) => store.delete(key),
       deleteAll: async () => store.clear(),
+      transaction: async (fn) => { await fn(); },
       setAlarm: async (ts) => { alarms.length = 0; alarms.push(ts); },
       deleteAlarm: async () => { alarms.length = 0; },
     },
   };
 }
 
-function dmEvent(id, { user = "U777", channel = "D123", text = "hi" } = {}) {
+function dmEvent(id, { user = "U777", channel = "D123", text = "hi", account = "ca-1" } = {}) {
   return {
     id,
     type: "composio.trigger.message",
-    metadata: { log_id: `log-${id}`, trigger_slug: "SLACK_DIRECT_MESSAGE_RECEIVED" },
+    metadata: { log_id: `log-${id}`, trigger_slug: "SLACK_DIRECT_MESSAGE_RECEIVED", connected_account_id: account },
     data: { type: "message", channel, channel_type: "im", user, text },
     timestamp: "2026-10-27T12:00:00Z",
   };
@@ -175,7 +179,7 @@ test("Composio buffers Slack DMs per conversation; alarm forwards the aggregated
   assert.equal((await r2.json()).status, "buffered");
   assert.equal(calls.length, 0); // nothing forwarded before the quiet window
 
-  const { obj } = env.SLACK_DM_BUFFER.instances.get("channel:D123");
+  const { obj } = env.SLACK_DM_BUFFER.instances.get("channel:ca-1:D123");
   await obj.alarm();
   assert.equal(calls.length, 1);
   const body = JSON.parse(calls[0].options.body);
@@ -203,10 +207,10 @@ test("Composio: Daniel's own DM cancels only that conversation's pending buffer"
   assert.equal(res.status, 202);
   assert.equal((await res.json()).status, "ignored");
 
-  await env.SLACK_DM_BUFFER.instances.get("channel:D123").obj.alarm();
+  await env.SLACK_DM_BUFFER.instances.get("channel:ca-1:D123").obj.alarm();
   assert.equal(calls.length, 0); // cancelled batch never forwards
 
-  await env.SLACK_DM_BUFFER.instances.get("channel:D456").obj.alarm();
+  await env.SLACK_DM_BUFFER.instances.get("channel:ca-1:D456").obj.alarm();
   assert.equal(calls.length, 1); // the other conversation still flushes
   const body = JSON.parse(calls[0].options.body);
   assert.ok(body.message.includes("evt-c2"));
@@ -232,6 +236,80 @@ test("Composio: Daniel's DM without a buffer binding is still ignored", async (t
   assert.equal(res.status, 202);
   assert.equal((await res.json()).status, "ignored");
   assert.equal(calls.length, 0);
+});
+
+test("Composio: Daniel's channel-less DM reply cancels the shared channel-less buffer", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({});
+  });
+  const env = dmEnv();
+  env.SLACK_DM_BUFFER = fakeNamespace(env);
+  const ctx = { waitUntil: () => {} };
+
+  assert.equal((await composio.handle(dmEvent("evt-nl-1", { channel: null }), env, ctx)).status, 202);
+  const res = await composio.handle(dmEvent("evt-nl-2", { user: DANIEL, channel: null }), env, ctx);
+  assert.equal((await res.json()).status, "ignored");
+
+  await env.SLACK_DM_BUFFER.instances.get("dm:ca-1:unknown").obj.alarm();
+  assert.equal(calls.length, 0); // the pending buffer was cancelled, not forwarded
+});
+
+test("Composio isolates buffers across workspaces sharing a channel ID", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({});
+  });
+  const env = dmEnv();
+  env.SLACK_DM_BUFFER = fakeNamespace(env);
+  const ctx = { waitUntil: () => {} };
+
+  assert.equal((await composio.handle(dmEvent("evt-w1", { account: "ca-1" }), env, ctx)).status, 202);
+  assert.equal((await composio.handle(dmEvent("evt-w2", { account: "ca-2", user: "U555" }), env, ctx)).status, 202);
+
+  // Daniel's reply in workspace ca-2 leaves workspace ca-1's buffer alone.
+  await composio.handle(dmEvent("evt-w3", { account: "ca-2", user: DANIEL }), env, ctx);
+
+  await env.SLACK_DM_BUFFER.instances.get("channel:ca-1:D123").obj.alarm();
+  assert.equal(calls.length, 1);
+  assert.ok(JSON.parse(calls[0].options.body).message.includes("evt-w1"));
+
+  await env.SLACK_DM_BUFFER.instances.get("channel:ca-2:D123").obj.alarm();
+  assert.equal(calls.length, 1); // cancelled, nothing more sent
+});
+
+test("SlackDebounceBuffer keeps messages appended while a forward is in flight", async (t) => {
+  const calls = [];
+  let release = () => {};
+  let held = false;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    if (!held) {
+      held = true;
+      await new Promise((r) => { release = r; });
+    }
+    return Response.json({});
+  });
+  const state = mockState();
+  const obj = new SlackDebounceBuffer(state, { POKE_API_KEY: "k" });
+
+  await obj.fetch(new Request("https://debounce.internal/append", {
+    method: "POST", body: JSON.stringify({ message: "first" }),
+  }));
+  const alarmRun = obj.alarm();
+  // A new DM arrives while the Poke request is still in flight.
+  await obj.fetch(new Request("https://debounce.internal/append", {
+    method: "POST", body: JSON.stringify({ message: "second" }),
+  }));
+  release();
+  await alarmRun;
+
+  assert.equal(calls.length, 1); // only the first batch forwarded
+  await obj.alarm(); // the surviving message flushes on the next alarm
+  assert.equal(calls.length, 2);
+  assert.equal(JSON.parse(calls[1].options.body).message, "second");
 });
 
 test("Composio returns 503 when the debounce buffer append fails", async (t) => {

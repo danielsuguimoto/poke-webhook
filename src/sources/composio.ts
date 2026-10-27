@@ -85,7 +85,7 @@ export const composio: SourceHandler = {
     const slackMessage = slug.includes("SLACK")
       && (isSlackMessagePayload(data) || (messageSlug && hasMessageText(data)));
     const slackDm = slackMessage && isDmTrigger(slug);
-    const conversationKey = slackDm ? slackConversationKey(data) : "";
+    const conversationKey = slackDm ? slackConversationKey(data, metadata) : "";
 
     // Messages sent by the configured user (outbound posts/DMs) are never
     // forwarded. In a debounced DM conversation, the user's own message also
@@ -227,17 +227,19 @@ function isDmTrigger(slug: string): boolean {
 }
 
 // Conversation key for the debounce buffer: the Slack channel/conversation ID
-// on the payload or a nested `event`/`message` envelope; falls back to the
-// sender ID so DMs without a channel field still buffer separately per sender.
-function slackConversationKey(data: Record<string, unknown>): string {
+// on the payload or a nested `event`/`message` envelope, namespaced by the
+// Composio connected account so identical channel IDs in different Slack
+// workspaces never share a buffer. Channel-less DMs share one buffer key so a
+// reply from the configured user can still cancel pending messages.
+function slackConversationKey(data: Record<string, unknown>, metadata: Record<string, unknown>): string {
+  const account = str(metadata.connected_account_id);
   for (const container of messageContainers(data)) {
     if (!container || typeof container !== "object" || Array.isArray(container)) continue;
     const record = container as Record<string, unknown>;
     const id = str(record.channel) || str(record.channel_id);
-    if (id) return `channel:${id}`;
+    if (id) return `channel:${account}:${id}`;
   }
-  const sender = senderUserId(data);
-  return sender ? `sender:${sender}` : "unknown";
+  return `dm:${account}:unknown`;
 }
 
 // Channel-message triggers (e.g. SLACK_CHANNEL_MESSAGE_RECEIVED) are gated on

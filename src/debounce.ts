@@ -60,17 +60,28 @@ export class SlackDebounceBuffer {
       : `[Composio] ${messages.length} mensagens diretas do Slack agregadas:\n\n${messages.join("\n\n---\n\n")}`;
     const delivered = await forwardToPoke(text, this.env);
     if (delivered) {
-      await this.ctx.storage.deleteAll();
+      await this.dropSent(messages.length);
       return;
     }
     const attempts = ((await this.ctx.storage.get<number>(ATTEMPTS_KEY)) ?? 0) + 1;
     if (attempts >= MAX_FORWARD_ATTEMPTS) {
       console.error(`Slack DM debounce: dropping ${messages.length} buffered message(s) after ${attempts} failed Poke forwards`);
-      await this.ctx.storage.deleteAll();
+      await this.dropSent(messages.length);
       return;
     }
     await this.ctx.storage.put(ATTEMPTS_KEY, attempts);
     await this.ctx.storage.setAlarm(Date.now() + RETRY_DELAY_MS);
+  }
+
+  // Removes the `sentCount` messages that were just forwarded, inside a
+  // transaction so messages appended while the Poke request was in flight are
+  // preserved instead of being wiped.
+  private async dropSent(sentCount: number): Promise<void> {
+    await this.ctx.storage.transaction(async () => {
+      const current = await this.messages();
+      await this.ctx.storage.put(MESSAGES_KEY, current.slice(sentCount));
+      await this.ctx.storage.delete(ATTEMPTS_KEY);
+    });
   }
 
   private async messages(): Promise<string[]> {
