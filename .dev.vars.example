@@ -13,4 +13,5 @@ TODOIST_API_TOKEN=your-todoist-api-token
 TINYFISH_API_KEY=your-tinyfish-api-key
 RAMBLE_WEBHOOK_SECRET=your-ramble-signing-secret
 RESEND_WEBHOOK_SECRET=whsec_your-resend-signing-secret
-SLACK_USER_ID=U0123ABC456  # optional: Composio Slack channel messages forward only when this user is mentioned; messages sent by this user are never forwarded
+SLACK_USER_ID=U0123ABC456  # optional: Composio Slack channel messages forward only when this user is mentioned; messages sent by this user are never forwarded and cancel that conversation's pending DM buffer
+SLACK_DM_DEBOUNCE_SECONDS=60  # optional: quiet window before a buffered Slack DM batch is forwarded to Poke

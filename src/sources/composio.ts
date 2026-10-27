@@ -1,4 +1,5 @@
 import type { SourceHandler } from "../index";
+import { debounceWindowMs } from "../debounce";
 import { forwardToPoke, accepted, ignored } from "../poke";
 import { json } from "../utils";
 
@@ -76,21 +77,28 @@ export const composio: SourceHandler = {
       : {};
     const dedupId = eventId || str(metadata.log_id);
 
-    // Messages sent by the configured user (outbound posts/DMs) are never
-    // forwarded; channel messages from others are only relevant when that
-    // user is mentioned; direct messages always forward, as does everything
-    // when SLACK_USER_ID is not configured.
     const triggerSlug = str(metadata.trigger_slug) || str(data.trigger_slug);
     const slug = triggerSlug.toUpperCase();
     // Message-shaped event: explicit `type: "message"`, or a message/DM trigger
     // slug carrying message text (reactions and other event types have none).
     const messageSlug = slug.includes("MESSAGE") || /(^|_)DM(_|$)/.test(slug);
-    if (
-      slug.includes("SLACK")
-      && (isSlackMessagePayload(data) || (messageSlug && hasMessageText(data)))
-      && env.SLACK_USER_ID
-      && env.SLACK_USER_ID === senderUserId(data)
-    ) {
+    const slackMessage = slug.includes("SLACK")
+      && (isSlackMessagePayload(data) || (messageSlug && hasMessageText(data)));
+    const slackDm = slackMessage && isDmTrigger(slug);
+    const conversationKey = slackDm ? slackConversationKey(data) : "";
+
+    // Messages sent by the configured user (outbound posts/DMs) are never
+    // forwarded. In a debounced DM conversation, the user's own message also
+    // cancels any pending buffered batch for that conversation only.
+    if (slackMessage && env.SLACK_USER_ID && env.SLACK_USER_ID === senderUserId(data)) {
+      if (conversationKey && env.SLACK_DM_BUFFER) {
+        try {
+          const stub = env.SLACK_DM_BUFFER.get(env.SLACK_DM_BUFFER.idFromName(conversationKey));
+          await stub.fetch("https://debounce.internal/cancel", { method: "POST" });
+        } catch (err) {
+          console.error(`Slack DM debounce cancel failed: ${err}`);
+        }
+      }
       return ignored(eventType, dedupId);
     }
     if (
@@ -110,6 +118,31 @@ export const composio: SourceHandler = {
           : json(503, { error: "poke_forward_failed" });
       }
       if (!markSeen(dedupId)) return ignored(eventType, dedupId);
+    }
+
+    // Direct messages are buffered per conversation in a Durable Object and
+    // forwarded once the quiet window expires; the webhook is acknowledged
+    // immediately (buffered), so a failed Poke forward retries via the DO
+    // alarm instead of Composio redelivery.
+    if (conversationKey && env.SLACK_DM_BUFFER) {
+      const stub = env.SLACK_DM_BUFFER.get(env.SLACK_DM_BUFFER.idFromName(conversationKey));
+      let buffered = false;
+      try {
+        const res = await stub.fetch("https://debounce.internal/append", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            message: translate(payload, metadata, eventId),
+            windowMs: debounceWindowMs(env),
+          }),
+        });
+        buffered = res.ok;
+      } catch (err) {
+        console.error(`Slack DM debounce append failed: ${err}`);
+      }
+      if (dedupId && !buffered) seenEvents.delete(dedupId);
+      if (!buffered) return json(503, { error: "debounce_buffer_failed" });
+      return json(202, { status: "buffered", event_type: eventType, event_id: dedupId });
     }
 
     const forward = forwardToPoke(translate(payload, metadata, eventId), env);
@@ -187,6 +220,24 @@ function senderUserId(data: Record<string, unknown>): string {
     if (id) return id;
   }
   return "";
+}
+
+function isDmTrigger(slug: string): boolean {
+  return slug.includes("DIRECT_MESSAGE") || /(^|_)DM(_|$)/.test(slug);
+}
+
+// Conversation key for the debounce buffer: the Slack channel/conversation ID
+// on the payload or a nested `event`/`message` envelope; falls back to the
+// sender ID so DMs without a channel field still buffer separately per sender.
+function slackConversationKey(data: Record<string, unknown>): string {
+  for (const container of messageContainers(data)) {
+    if (!container || typeof container !== "object" || Array.isArray(container)) continue;
+    const record = container as Record<string, unknown>;
+    const id = str(record.channel) || str(record.channel_id);
+    if (id) return `channel:${id}`;
+  }
+  const sender = senderUserId(data);
+  return sender ? `sender:${sender}` : "unknown";
 }
 
 // Channel-message triggers (e.g. SLACK_CHANNEL_MESSAGE_RECEIVED) are gated on
