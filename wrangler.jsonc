@@ -16,7 +16,7 @@
     ]
   },
   "migrations": [
-    { "tag": "v1", "new_classes": ["SlackDebounceBuffer"] }
+    { "tag": "v1", "new_sqlite_classes": ["SlackDebounceBuffer"] }
   ],
   "previews": {
     "vars": {
