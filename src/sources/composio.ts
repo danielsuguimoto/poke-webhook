@@ -229,8 +229,10 @@ function isDmTrigger(slug: string): boolean {
 // Conversation key for the debounce buffer: the Slack channel/conversation ID
 // on the payload or a nested `event`/`message` envelope, namespaced by the
 // Composio connected account so identical channel IDs in different Slack
-// workspaces never share a buffer. Channel-less DMs share one buffer key so a
-// reply from the configured user can still cancel pending messages.
+// workspaces never share a buffer. Channel-less DMs fall back to the sender
+// ID: a channel-less reply then can only cancel its own buffer (an extra
+// notification at worst), never unrelated conversations — real Slack DM
+// events always carry `channel`.
 function slackConversationKey(data: Record<string, unknown>, metadata: Record<string, unknown>): string {
   const account = str(metadata.connected_account_id);
   for (const container of messageContainers(data)) {
@@ -239,7 +241,7 @@ function slackConversationKey(data: Record<string, unknown>, metadata: Record<st
     const id = str(record.channel) || str(record.channel_id);
     if (id) return `channel:${account}:${id}`;
   }
-  return `dm:${account}:unknown`;
+  return `dm:${account}:${senderUserId(data) || "unknown"}`;
 }
 
 // Channel-message triggers (e.g. SLACK_CHANNEL_MESSAGE_RECEIVED) are gated on

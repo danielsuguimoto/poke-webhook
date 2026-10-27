@@ -238,7 +238,7 @@ test("Composio: Daniel's DM without a buffer binding is still ignored", async (t
   assert.equal(calls.length, 0);
 });
 
-test("Composio: Daniel's channel-less DM reply cancels the shared channel-less buffer", async (t) => {
+test("Composio keys channel-less DMs by sender, never mixing conversations", async (t) => {
   const calls = [];
   t.mock.method(globalThis, "fetch", async (url, options) => {
     calls.push({ url, options });
@@ -248,12 +248,20 @@ test("Composio: Daniel's channel-less DM reply cancels the shared channel-less b
   env.SLACK_DM_BUFFER = fakeNamespace(env);
   const ctx = { waitUntil: () => {} };
 
-  assert.equal((await composio.handle(dmEvent("evt-nl-1", { channel: null }), env, ctx)).status, 202);
-  const res = await composio.handle(dmEvent("evt-nl-2", { user: DANIEL, channel: null }), env, ctx);
+  assert.equal((await composio.handle(dmEvent("evt-nl-1", { channel: null, user: "U777" }), env, ctx)).status, 202);
+  assert.equal((await composio.handle(dmEvent("evt-nl-2", { channel: null, user: "U555" }), env, ctx)).status, 202);
+
+  // A channel-less reply from Daniel touches only his own buffer: U777's and
+  // U555's pending messages are never cancelled by an unrelated reply.
+  const res = await composio.handle(dmEvent("evt-nl-3", { channel: null, user: DANIEL }), env, ctx);
   assert.equal((await res.json()).status, "ignored");
 
-  await env.SLACK_DM_BUFFER.instances.get("dm:ca-1:unknown").obj.alarm();
-  assert.equal(calls.length, 0); // the pending buffer was cancelled, not forwarded
+  await env.SLACK_DM_BUFFER.instances.get("dm:ca-1:U777").obj.alarm();
+  await env.SLACK_DM_BUFFER.instances.get("dm:ca-1:U555").obj.alarm();
+  assert.equal(calls.length, 2);
+  const forwarded = calls.map((c) => JSON.parse(c.options.body).message).join("\n");
+  assert.ok(forwarded.includes("evt-nl-1"));
+  assert.ok(forwarded.includes("evt-nl-2"));
 });
 
 test("Composio isolates buffers across workspaces sharing a channel ID", async (t) => {
