@@ -10,6 +10,19 @@
     "POKE_API_URL": "https://poke.com/api/v1/inbound/api-message",
     "SLACK_DM_DEBOUNCE_SECONDS": "60"
   },
+  "queues": {
+    // One entry per queue this worker consumes. Add more objects to scale
+    // out to additional queues; each can set its own batch/retry policy and
+    // an optional "dead_letter_queue".
+    "consumers": [
+      {
+        "queue": "poke-webhook-events",
+        "max_batch_size": 10,
+        "max_batch_timeout": 5,
+        "max_retries": 3
+      }
+    ]
+  },
   "durable_objects": {
     "bindings": [
       { "name": "SLACK_DM_BUFFER", "class_name": "SlackDebounceBuffer" }

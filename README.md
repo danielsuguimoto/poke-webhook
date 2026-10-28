@@ -144,7 +144,7 @@ The Poke message has Portuguese labels for arrival/departure/test, geofence name
 
 Although Location Tracker allows tokenless endpoints, **this receiver requires a bearer token**: missing Worker secret returns `500`; missing, malformed, or mismatched authorization returns `401` before JSON parsing; malformed JSON or known-event payloads return `400`. Accepted responses are `200` with `{"status":"accepted","event_type":"enter","event_id":"fence-1"}` (`event_id` is the geofence ID, not a unique delivery ID).
 
-Forwarding uses the existing `forwardToPoke` helper and `ctx.waitUntil`: acceptance does not guarantee downstream delivery. Poke failures are logged; there is no retry queue. Location Tracker currently attempts delivery once with a five-second timeout and logs the response in its delivery log. No deduplication or timestamp freshness/replay window is imposed here: upstream supplies no unique delivery ID, timestamps have second precision, and tests can refer to older location fixes. Repeated POSTs are forwarded again.
+Forwarding uses the existing `forwardToPoke` helper and `ctx.waitUntil`: acceptance does not guarantee downstream delivery. Poke failures are logged; direct HTTP deliveries are not retried by this Worker (producers that need retries can publish through a queue — see [Queue consumers](#queue-consumers)). Location Tracker currently attempts delivery once with a five-second timeout and logs the response in its delivery log. No deduplication or timestamp freshness/replay window is imposed here: upstream supplies no unique delivery ID, timestamps have second precision, and tests can refer to older location fixes. Repeated POSTs are forwarded again.
 
 Example for TinyFish. Pass `webhook_url` when creating a run (must be HTTPS):
 
@@ -175,10 +175,27 @@ Example for Resend. In the [Resend dashboard](https://resend.com/webhooks) (or v
 
 Example for Todoist. In the App Management Console, set the webhook callback URL to `https://<your-worker>.workers.dev/todoist` and subscribe to `reminder:fired`. Webhooks only fire for users who completed your app's OAuth flow — for personal use, run the OAuth flow manually once with your own account (see the [Todoist docs](https://developer.todoist.com/api/v1/#tag/Webhooks)). When a reminder fires, the worker fetches the task from the Todoist API using `TODOIST_API_TOKEN` and forwards it to Poke; tasks with the `ai` label are executed by Poke (which is instructed to mark them complete in Todoist afterwards), while the rest only trigger a warning to you.
 
+## Queue consumers
+
+The Worker is also a Cloudflare Queues consumer (`wrangler.jsonc` → `queues.consumers`), so producers can deliver events asynchronously instead of POSTing a source path. Add one object per queue to scale out; each entry can set its own `max_batch_size`, `max_batch_timeout`, `max_retries`, and an optional `dead_letter_queue`.
+
+Each message body must be a structured event envelope (an object or a JSON string that parses to one):
+
+```json
+{"source": "ramble", "type": "transcription.completed", "data": {"recording_id": "..."}, "timestamp": "..."}
+```
+
+`source` selects the same handler as the matching `POST /<source>` route (registered in `src/registry.ts`), and `data` is the payload the HTTP route would have received in its body. Webhook signature `authorize` checks are not re-run for queued messages — only publish to the queue from trusted producers. Batch semantics:
+
+- Handled messages are `ack()`ed individually; `batch.ackAll()` acknowledges the remainder after every message is marked.
+- A handler response of `5xx` (e.g. a failed Poke forward) or a thrown error calls `message.retry()` so the queue redelivers that message (up to `max_retries`).
+- Malformed envelopes and `4xx` handler responses (including ignored/unroutable events) are logged and acknowledged — never retried.
+- `src/queue.ts` `QUEUE_DISPATCHERS` maps queue names to custom dispatchers; queues without an entry fall back to `"*"`, which dispatches by `source`.
+
 ## Add a new source
 
 1. Create `src/sources/<name>.ts` exporting a `SourceHandler` (`handle(payload, env, ctx)` → `Response`, optional `authorize(rawBody, request, env)` → `Response | null`).
-2. Register it in `src/index.ts` under a new path in `ROUTES`.
+2. Register it in `src/registry.ts` `SOURCES` under its source name — it is routed to `POST /<name>` and to queue events whose `source` is `<name>`.
 
 ## Cloudflare Workers Builds
 
