@@ -20,6 +20,38 @@ const RAMBLE_EVENT = {
   type: "transcription.completed",
   data: { recording_id: "test-queue-rec-1", transcription: "olá" },
 };
+const CLOUDFLARE_EVENT = {
+  type: "cf.workersBuilds.worker.build.succeeded",
+  source: { type: "workersBuilds.worker", workerName: "my-worker" },
+  payload: {
+    buildUuid: "build-12345678-90ab-cdef-1234-567890abcdef",
+    status: "success",
+    buildOutcome: "success",
+    createdAt: "2025-05-01T02:48:57.132Z",
+    initializingAt: "2025-05-01T02:48:58.132Z",
+    runningAt: "2025-05-01T02:48:59.132Z",
+    stoppedAt: "2025-05-01T02:50:15.132Z",
+    buildTriggerMetadata: {
+      buildTriggerSource: "push_event",
+      branch: "main",
+      commitHash: "abc123def456",
+      commitMessage: "Fix bug in authentication",
+      author: "developer@example.com",
+      buildCommand: "npm run build",
+      deployCommand: "wrangler deploy",
+      rootDirectory: "/",
+      repoName: "my-worker-repo",
+      providerAccountName: "github-user",
+      providerType: "github",
+    },
+  },
+  metadata: {
+    accountId: "f9f79265f388666de8122cfb508d7776",
+    eventSubscriptionId: "1830c4bb612e43c3af7f4cada31fbf3f",
+    eventSchemaVersion: 1,
+    eventTimestamp: "2025-05-01T02:48:57.132Z",
+  },
+};
 
 function makeMessage(body, i = 0) {
   const state = { value: "pending" };
@@ -201,4 +233,221 @@ test("queue consumer routes batches by queue name through the dispatch registry"
   } finally {
     delete QUEUE_DISPATCHERS["custom-queue"];
   }
+});
+
+test("queue consumer forwards native Cloudflare build events without a custom envelope", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    calls.push({ url, options });
+    return Response.json({});
+  });
+  const original = structuredClone(CLOUDFLARE_EVENT);
+  const { messages } = await invoke([CLOUDFLARE_EVENT, JSON.stringify(CLOUDFLARE_EVENT)]);
+  assert.deepEqual(messages.map((m) => m.state.value), ["ack", "ack"]);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(CLOUDFLARE_EVENT, original);
+  for (const call of calls) {
+    assert.equal(call.url, "https://poke.com/api/v1/inbound/api-message");
+    assert.equal(call.options.headers.Authorization, "Bearer test-poke-key");
+    assert.match(JSON.parse(call.options.body).message, /^\[Cloudflare\] Build concluído com sucesso/);
+  }
+});
+
+test("queue consumer preserves native Cloudflare source, payload and metadata during normalization", async () => {
+  const { QUEUE_DISPATCHERS } = require("../.test-build/queue.js");
+  const seen = [];
+  QUEUE_DISPATCHERS["native-queue"] = async (event) => { seen.push(event); return "ack"; };
+  try {
+    const { messages } = await invoke([CLOUDFLARE_EVENT], { queue: "native-queue" });
+    assert.equal(messages[0].state.value, "ack");
+    assert.deepEqual(seen, [{
+      source: "cloudflare",
+      type: CLOUDFLARE_EVENT.type,
+      data: CLOUDFLARE_EVENT,
+      timestamp: CLOUDFLARE_EVENT.metadata.eventTimestamp,
+    }]);
+  } finally {
+    delete QUEUE_DISPATCHERS["native-queue"];
+  }
+});
+
+for (const [kind, status, outcome, title] of [
+  ["started", "running", null, "Build iniciado"],
+  ["succeeded", "success", "success", "Build concluído com sucesso"],
+  ["failed", "failed", "failure", "Falha no build"],
+  ["canceled", "canceled", "canceled", "Build cancelado"],
+]) {
+  test(`native Cloudflare build.${kind} gets a Portuguese summary and preserves the full event`, async (t) => {
+    const event = structuredClone(CLOUDFLARE_EVENT);
+    event.type = `cf.workersBuilds.worker.build.${kind}`;
+    Object.assign(event.payload, { status, buildOutcome: outcome });
+    if (kind === "started") event.payload.stoppedAt = null;
+    let message;
+    t.mock.method(globalThis, "fetch", async (_url, options) => {
+      message = JSON.parse(options.body).message;
+      return Response.json({});
+    });
+    const { messages } = await invoke([event]);
+    assert.equal(messages[0].state.value, "ack");
+    assert.equal(message, [
+      `[Cloudflare] ${title}`,
+      "Worker: my-worker",
+      `ID do build: ${event.payload.buildUuid}`,
+      `Status: ${status}`,
+      ...(outcome ? [`Resultado: ${outcome}`] : []),
+      "Repositório: my-worker-repo",
+      "Conta do repositório: github-user",
+      "Branch: main",
+      "Commit: abc123def456",
+      "Mensagem do commit: Fix bug in authentication",
+      "Autor: developer@example.com",
+      "Data e hora: 2025-05-01T02:48:57.132Z",
+      "", "Dados do evento:", JSON.stringify(event, null, 2),
+    ].join("\n"));
+  });
+}
+
+for (const [source, type, payload] of [
+  [{ type: "r2" }, "cf.r2.bucket.created", { name: "my-bucket", jurisdiction: "default", location: "WNAM", storageClass: "Standard" }],
+  [{ type: "kv" }, "cf.kv.namespace.created", { id: "namespace-1", title: "My namespace" }],
+  [{ type: "workersBuilds.worker", workerName: "my-worker" }, "cf.workersBuilds.worker.build.queued", { buildUuid: "build-queued" }],
+  [{ type: "future.product", resourceId: "resource-1" }, "cf.future.product.deployed", { deploymentUrl: "https://example.com", details: { result: "Keep in English" } }],
+]) {
+  test(`native ${type} uses the generic Cloudflare summary rather than being dropped`, async (t) => {
+    const event = { type, source, payload, metadata: CLOUDFLARE_EVENT.metadata };
+    let message;
+    t.mock.method(globalThis, "fetch", async (_url, options) => {
+      message = JSON.parse(options.body).message;
+      return Response.json({});
+    });
+    const errors = [];
+    t.mock.method(console, "error", (...args) => errors.push(args));
+    const { messages } = await invoke([JSON.stringify(event)]);
+    assert.equal(messages[0].state.value, "ack");
+    assert.equal(errors.length, 0);
+    assert.equal(message, [
+      `[Cloudflare] Evento: ${type}`,
+      `Data e hora: ${event.metadata.eventTimestamp}`,
+      "", "Dados do evento:", JSON.stringify(event, null, 2),
+    ].join("\n"));
+  });
+}
+
+test("Cloudflare summary tolerates absent optional build details and preserves extra fields", async (t) => {
+  const event = {
+    ...CLOUDFLARE_EVENT,
+    source: { type: "workersBuilds.worker" },
+    payload: { buildUuid: "build-minimal", buildTriggerMetadata: null, extra: { url: "https://example.com", error: "Original error" } },
+    metadata: { accountId: "account-1", eventSchemaVersion: 2 },
+  };
+  let message;
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    message = JSON.parse(options.body).message;
+    return Response.json({});
+  });
+  const { messages } = await invoke([event]);
+  assert.equal(messages[0].state.value, "ack");
+  assert.equal(message, [
+    "[Cloudflare] Build concluído com sucesso", "ID do build: build-minimal",
+    "", "Dados do evento:", JSON.stringify(event, null, 2),
+  ].join("\n"));
+});
+
+test("queue consumer drops malformed native Cloudflare envelopes without forwarding", async (t) => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("must not forward malformed native messages"));
+  const errors = [];
+  t.mock.method(console, "error", (...args) => errors.push(args));
+  const malformed = [
+    { ...CLOUDFLARE_EVENT, type: "build.succeeded" },
+    { ...CLOUDFLARE_EVENT, type: "cf.workersBuilds.worker." },
+    { ...CLOUDFLARE_EVENT, type: null },
+    { ...CLOUDFLARE_EVENT, source: null },
+    { ...CLOUDFLARE_EVENT, source: [] },
+    { ...CLOUDFLARE_EVENT, source: {} },
+    { ...CLOUDFLARE_EVENT, source: { type: "" } },
+    { ...CLOUDFLARE_EVENT, source: { type: 1 } },
+    { ...CLOUDFLARE_EVENT, source: { type: "r2" } },
+    { ...CLOUDFLARE_EVENT, payload: undefined },
+    { ...CLOUDFLARE_EVENT, payload: null },
+    { ...CLOUDFLARE_EVENT, payload: [] },
+    { ...CLOUDFLARE_EVENT, metadata: undefined },
+    { ...CLOUDFLARE_EVENT, metadata: null },
+    { ...CLOUDFLARE_EVENT, metadata: [] },
+    { ...CLOUDFLARE_EVENT, metadata: { eventTimestamp: 42 } },
+  ];
+  const { messages, calls } = await invoke(malformed);
+  assert.deepEqual(messages.map((m) => m.state.value), malformed.map(() => "ack"));
+  assert.equal(calls.ackAll, 1);
+  assert.equal(errors.length, malformed.length);
+  for (const error of errors) assert.match(error[0], /dropping malformed message/);
+});
+
+test("queue consumer handles native and legacy messages independently and redelivers failed builds", async (t) => {
+  let nativeAttempts = 0;
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    const message = JSON.parse(options.body).message;
+    calls.push(message);
+    if (message.startsWith("[Cloudflare]") && ++nativeAttempts === 1) return new Response("unavailable", { status: 503 });
+    return Response.json({});
+  });
+  const { messages, calls: batchCalls } = await invoke([CLOUDFLARE_EVENT, LOCATION_EVENT, "garbage"]);
+  assert.deepEqual(messages.map((m) => m.state.value), ["retry", "ack", "ack"]);
+  assert.equal(batchCalls.ackAll, 1);
+  const second = await invoke([CLOUDFLARE_EVENT]);
+  assert.equal(second.messages[0].state.value, "ack");
+  assert.equal(nativeAttempts, 2);
+  assert.equal(calls.length, 3);
+});
+
+test("queue consumer waits for native Cloudflare forwarding before acknowledging", async (t) => {
+  let finish;
+  t.mock.method(globalThis, "fetch", () => new Promise((resolve) => { finish = resolve; }));
+  const { batch, messages, calls } = makeBatch([CLOUDFLARE_EVENT]);
+  const result = worker.queue(batch, ENV, { waitUntil() {} });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(messages[0].state.value, "pending");
+  assert.equal(calls.ackAll, 0);
+  finish(Response.json({}));
+  await result;
+  assert.equal(messages[0].state.value, "ack");
+  assert.equal(calls.ackAll, 1);
+});
+
+test("queue consumer retries native events on network errors or missing Poke credentials", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => { throw new Error("network down"); });
+  const first = await invoke([CLOUDFLARE_EVENT]);
+  assert.equal(first.messages[0].state.value, "retry");
+  const second = await invoke([CLOUDFLARE_EVENT], { env: { POKE_API_KEY: "" } });
+  assert.equal(second.messages[0].state.value, "retry");
+});
+
+test("Cloudflare source also accepts native data inside an existing custom queue envelope", async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (_url, options) => {
+    calls.push(JSON.parse(options.body).message);
+    return Response.json({});
+  });
+  const { messages } = await invoke([{ source: "cloudflare", type: CLOUDFLARE_EVENT.type, data: CLOUDFLARE_EVENT }]);
+  assert.equal(messages[0].state.value, "ack");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0], /^\[Cloudflare\] Build concluído com sucesso/);
+});
+
+test("Cloudflare source rejects invalid native data inside custom envelopes", async (t) => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("must not forward invalid native data"));
+  const errors = [];
+  t.mock.method(console, "error", (...args) => errors.push(args));
+  const { messages } = await invoke([{ source: "cloudflare", type: CLOUDFLARE_EVENT.type, data: {} }]);
+  assert.equal(messages[0].state.value, "ack");
+  assert.match(errors[0][0], /handler returned 400/);
+});
+
+test("Cloudflare is queue-only and cannot be spoofed through an unauthenticated HTTP request", async (t) => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("must not forward HTTP Cloudflare events"));
+  const response = await worker.fetch(new Request("https://worker.test/cloudflare", {
+    method: "POST", body: JSON.stringify(CLOUDFLARE_EVENT),
+  }), ENV, { waitUntil() {} });
+  assert.equal(response.status, 403);
+  assert.deepEqual(await response.json(), { error: "queue_only_source" });
 });

@@ -9,6 +9,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /agentmail` | [AgentMail](https://docs.agentmail.to/webhooks-overview) | `message.received`, `message.sent`, `message.delivered` |
 | `POST /anakin` | [Anakin](https://anakin.io/docs/api-reference/webhooks) | `job.*`, `batch.*`, `wire.job.*`, `monitor.change`, `ai.search.*`, `webhook.test` — deliveries are deduplicated by event id (`changeId` for `monitor.change`) |
 | `POST /circleback` | [Circleback](https://support.circleback.ai/en/articles/11014015-export-meeting-data-with-webhooks) | Meeting notes export |
+| Queue only (`cloudflare`) | [Cloudflare Event Subscriptions](https://developers.cloudflare.com/queues/event-subscriptions/events-schemas/) | Native `cf.*` events; Workers Builds lifecycle summaries, generic summaries for other event types. `POST /cloudflare` is rejected |
 | `POST /composio` | [Composio](https://docs.composio.dev/docs/setting-up-triggers/subscribing-to-events) | `composio.trigger.message` (V3 envelope) — `metadata.trigger_slug` and `data` are forwarded; other project event types and legacy V1/V2 envelopes are ignored. Slack channel messages (e.g. `SLACK_CHANNEL_MESSAGE_RECEIVED`) forward only when the `SLACK_USER_ID` user is mentioned; direct messages are debounced per conversation (see below) |
 | `POST /goal-api` | [GOAL API](https://goal-api.com/documentation#webhooks) | `match.started`, `match.finished`, `goal.scored`, `score.changed`, `match.status_changed` — the full payload is forwarded as JSON |
 | `POST /location-tracker` | [Location Tracker](https://github.com/danielsuguimoto/location-tracker) | Geofence `enter`, `exit`, `test` — activity context for location-based reminders; tests are explicitly labeled, not treated as real movement |
@@ -19,7 +20,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /tinyfish` | [TinyFish](https://docs.tinyfish.ai/webhooks) | `run.completed`, `run.failed`, `run.cancelled` — deliveries are deduplicated by `run_id`; Poke failures return `503` so TinyFish can redeliver |
 | `POST /todoist` | [Todoist](https://developer.todoist.com/api/v1/#tag/Webhooks) | `reminder:fired` — the task is fetched via the Todoist API and forwarded; Poke executes tasks with the `ai` label (marking them complete afterwards) and warns you about the rest |
 
-Other event types are acknowledged with `202` and not forwarded (Todoist gets `200` instead — it retries any non-`200` delivery).
+Other webhook event types are acknowledged with `202` and not forwarded (Todoist gets `200` instead — it retries any non-`200` delivery). Native Cloudflare Event Subscriptions use a generic summary for event types without a dedicated formatter.
 
 ## How it works
 
@@ -179,7 +180,7 @@ Example for Todoist. In the App Management Console, set the webhook callback URL
 
 The Worker is also a Cloudflare Queues consumer (`wrangler.jsonc` → `queues.consumers`), so producers can deliver events asynchronously instead of POSTing a source path. Add one object per queue to scale out; each entry can set its own `max_batch_size`, `max_batch_timeout`, `max_retries`, and an optional `dead_letter_queue`.
 
-Each message body must be a structured event envelope (an object or a JSON string that parses to one):
+Message bodies can be objects or JSON strings. Existing producers can use the custom event envelope:
 
 ```json
 {"source": "ramble", "type": "transcription.completed", "data": {"recording_id": "..."}, "timestamp": "..."}
@@ -192,10 +193,41 @@ Each message body must be a structured event envelope (an object or a JSON strin
 - Malformed envelopes and `4xx` handler responses (including ignored/unroutable events) are logged and acknowledged — never retried.
 - `src/queue.ts` `QUEUE_DISPATCHERS` maps queue names to custom dispatchers; queues without an entry fall back to `"*"`, which dispatches by `source`.
 
+### Native Cloudflare Event Subscriptions
+
+[Cloudflare Event Subscriptions](https://developers.cloudflare.com/queues/event-subscriptions/events-schemas/) publish a different envelope, with an object-valued `source`, event-specific `payload`, and `metadata` rather than `data`:
+
+```json
+{
+  "type": "cf.workersBuilds.worker.build.succeeded",
+  "source": { "type": "workersBuilds.worker", "workerName": "my-worker" },
+  "payload": {
+    "buildUuid": "build-123",
+    "status": "success",
+    "buildOutcome": "success",
+    "buildTriggerMetadata": { "branch": "main", "commitHash": "abc123" }
+  },
+  "metadata": {
+    "accountId": "account-id",
+    "eventSubscriptionId": "subscription-id",
+    "eventSchemaVersion": 1,
+    "eventTimestamp": "2025-05-01T02:50:15.132Z"
+  }
+}
+```
+
+No wrapper or producer-side transformation is needed. The queue consumer recognizes the native `cf.<source.type>.*` shape and normalizes it to `source: "cloudflare"`, preserving the full native event in `data` and mapping `metadata.eventTimestamp` to the envelope timestamp. Custom queue dispatchers receive this normalized event too.
+
+The queue-only Cloudflare handler summarizes the four documented [Workers Builds events](https://developers.cloudflare.com/workers/ci-cd/builds/event-subscriptions/) (`build.started`, `build.succeeded`, `build.failed`, `build.canceled`) in Portuguese with available Worker, build ID, status, repository, branch, commit, author, and event timestamp details. The complete native event is included unchanged as JSON, preserving additional deployment/error fields if supplied. Other native event types (including future build event types) use a generic Cloudflare summary with the full event instead of being dropped as malformed.
+
+The documented build payloads do not include deployment URLs or error logs; Cloudflare's notification template fetches those separately via its API. This consumer does not invent URLs or fetch extra data, and needs no Cloudflare API token. Subscribe the existing consumer queue to the desired events in Cloudflare; no additional queue binding is required.
+
+Cloudflare delivery is trusted only through the queue: `POST /cloudflare` always returns `403` (no unsigned HTTP ingestion). Forwarding is awaited and returns `503` on Poke failure so the queue retries. Delivery is at least once, so duplicates remain possible. This format support covers Event Subscriptions, not unrelated queue body schemas such as R2 object Event Notifications.
+
 ## Add a new source
 
 1. Create `src/sources/<name>.ts` exporting a `SourceHandler` (`handle(payload, env, ctx)` → `Response`, optional `authorize(rawBody, request, env)` → `Response | null`).
-2. Register it in `src/registry.ts` `SOURCES` under its source name — it is routed to `POST /<name>` and to queue events whose `source` is `<name>`.
+2. Register it in `src/registry.ts` `SOURCES` under its source name — it is routed to `POST /<name>` and to queue events whose `source` is `<name>`. For a queue-only source, provide an `authorize` hook that rejects HTTP requests (as `cloudflare` does).
 
 ## Cloudflare Workers Builds
 

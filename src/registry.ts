@@ -2,6 +2,7 @@ import type { SourceHandler } from "./index";
 import { agentmail } from "./sources/agentmail";
 import { anakin } from "./sources/anakin";
 import { circleback } from "./sources/circleback";
+import { cloudflare } from "./sources/cloudflare";
 import { composio } from "./sources/composio";
 import { goalApi } from "./sources/goal-api";
 import { locationTracker } from "./sources/location-tracker";
@@ -16,6 +17,7 @@ export const SOURCES: Record<string, SourceHandler> = {
   "agentmail": agentmail,
   "anakin": anakin,
   "circleback": circleback,
+  "cloudflare": cloudflare,
   "composio": composio,
   "goal-api": goalApi,
   "location-tracker": locationTracker,
