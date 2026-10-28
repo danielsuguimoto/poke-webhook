@@ -16,7 +16,7 @@ Cloudflare Worker that receives webhook events from multiple tools, translates e
 | `POST /pluggy` | [Pluggy](https://docs.pluggy.ai/docs/webhooks) | `item/*`, `connector/status_updated`, `transactions/*`, `payment_intent/*`, `payment_request/updated`, `scheduled_payment/*`, `automatic_pix_payment/*`, `smart_transfer_*` |
 | `POST /ramble` | [Ramble](https://goodloop.dev/ramble/docs) | Finished recordings — the transcript is forwarded; deliveries are deduplicated by `recording_id` (test payloads are always forwarded) |
 | `POST /resend` | [Resend](https://resend.com/docs/webhooks/introduction) | `email.*`, `domain.*`, `contact.*`, `suppression.*`, `topic.*`, `inbox.*` — deliveries are deduplicated by event `type` + `created_at` + event data (retries redeliver an identical body) |
-| `POST /tinyfish` | [TinyFish](https://docs.tinyfish.ai/webhooks) | `run.completed`, `run.failed`, `run.cancelled` — deliveries are deduplicated by `run_id` |
+| `POST /tinyfish` | [TinyFish](https://docs.tinyfish.ai/webhooks) | `run.completed`, `run.failed`, `run.cancelled` — deliveries are deduplicated by `run_id`; Poke failures return `503` so TinyFish can redeliver |
 | `POST /todoist` | [Todoist](https://developer.todoist.com/api/v1/#tag/Webhooks) | `reminder:fired` — the task is fetched via the Todoist API and forwarded; Poke executes tasks with the `ai` label (marking them complete afterwards) and warns you about the rest |
 
 Other event types are acknowledged with `202` and not forwarded (Todoist gets `200` instead — it retries any non-`200` delivery).
@@ -27,7 +27,7 @@ Other event types are acknowledged with `202` and not forwarded (Todoist gets `2
 2. The source handler authenticates the request (signature, shared secret, or provider verification depending on the source; AgentMail and Resend sign webhooks via Svix — see the [AgentMail](https://docs.agentmail.to/webhook-verification) and [Resend](https://resend.com/docs/dashboard/webhooks/verify-webhooks-requests) verification docs).
 3. The source handler translates the payload into a plain-text `message` string.
 4. The message is forwarded to `POST $POKE_API_URL` with `Authorization: Bearer $POKE_API_KEY`.
-5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`.
+5. The Worker returns `200` immediately; the Poke call runs in the background via `ctx.waitUntil`. Exception: TinyFish forwards synchronously and returns `503` if Poke fails, so the delivery can be retried.
 
 Generated message headers, labels, instructions, and fallback text are in Portuguese. Source content (such as email bodies, meeting notes, task descriptions, event identifiers, and the GOAL API JSON payload) stays in its original language.
 
