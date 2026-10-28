@@ -165,6 +165,29 @@ test("queue consumer acks events for inherited object property names", async (t)
   }
 });
 
+test("queue consumer redelivery of a deduplicated source forwards after a failed attempt", async (t) => {
+  let pokeAttempts = 0;
+  t.mock.method(globalThis, "fetch", async (url, options) => {
+    if (String(url).includes("agent.tinyfish.ai")) return Response.json({ status: "COMPLETED" });
+    pokeAttempts++;
+    return pokeAttempts === 1 ? new Response("poke down", { status: 503 }) : Response.json({});
+  });
+  const tinyfishEvent = {
+    source: "tinyfish",
+    type: "run.completed",
+    data: { event: "run.completed", run_id: "run-dedup-1", data: {} },
+  };
+  const env = { TINYFISH_API_KEY: "test-tinyfish-key" };
+  const first = await invoke([tinyfishEvent], { env });
+  assert.equal(first.messages[0].state.value, "retry");
+  const second = await invoke([tinyfishEvent], { env });
+  assert.equal(second.messages[0].state.value, "ack");
+  assert.equal(pokeAttempts, 2);
+  const third = await invoke([tinyfishEvent], { env });
+  assert.equal(third.messages[0].state.value, "ack");
+  assert.equal(pokeAttempts, 2);
+});
+
 test("queue consumer routes batches by queue name through the dispatch registry", async (t) => {
   t.mock.method(globalThis, "fetch", async () => Response.json({}));
   const { QUEUE_DISPATCHERS } = require("../.test-build/queue.js");

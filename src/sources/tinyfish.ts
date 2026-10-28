@@ -9,6 +9,9 @@ const DEDUP_MAX_ENTRIES = 10_000;
 // Best-effort deduplication within a worker isolate: TinyFish may deliver the
 // same terminal event more than once (network retries, server restarts).
 const seenRuns = new Map<string, number>();
+// run_id -> in-flight forward, so concurrent duplicate deliveries share the
+// first attempt's outcome instead of being acknowledged early.
+const inFlight = new Map<string, Promise<boolean>>();
 
 function markSeen(runId: string): boolean {
   const now = Date.now();
@@ -42,7 +45,7 @@ interface TinyfishRun {
 }
 
 export const tinyfish: SourceHandler = {
-  async handle(payload, env, ctx): Promise<Response> {
+  async handle(payload, env, _ctx): Promise<Response> {
     const event = typeof payload.event === "string" ? payload.event : "";
     const runId =
       typeof payload.run_id === "string" && payload.run_id ? payload.run_id : "";
@@ -55,12 +58,31 @@ export const tinyfish: SourceHandler = {
     const verification = await verifyRun(runId, event as TinyfishEvent, env.TINYFISH_API_KEY);
     if (verification) return verification;
 
+    const pending = inFlight.get(runId);
+    if (pending) {
+      const delivered = await pending;
+      return delivered
+        ? ignored(event, runId)
+        : json(503, { error: "poke_forward_failed" });
+    }
+    // Claim the run before awaiting the forward so concurrent and retried
+    // deliveries are deduplicated.
     if (!markSeen(runId)) return ignored(event, runId);
 
     const data = (
       payload.data && typeof payload.data === "object" ? payload.data : {}
     ) as TinyfishRun;
-    ctx.waitUntil(forwardToPoke(translate(event as TinyfishEvent, runId, data), env));
+    // Forward synchronously: on Poke failure we return 503 so the delivery is
+    // retried (by TinyFish or the queue), and the claim is released so the
+    // retry is not deduplicated.
+    const forward = forwardToPoke(translate(event as TinyfishEvent, runId, data), env);
+    inFlight.set(runId, forward);
+    const delivered = await forward;
+    inFlight.delete(runId);
+    if (!delivered) {
+      seenRuns.delete(runId);
+      return json(503, { error: "poke_forward_failed" });
+    }
     return accepted(event, runId);
   },
 };
