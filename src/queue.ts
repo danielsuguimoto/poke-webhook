@@ -37,16 +37,26 @@ export async function handleQueueBatch(batch: MessageBatch<unknown>, env: Env, c
 }
 
 async function dispatchToSource(event: QueueEvent, env: Env, ctx: ExecutionContext): Promise<QueueOutcome> {
-  const handler = SOURCES[event.source];
-  if (!handler) {
+  if (!Object.hasOwn(SOURCES, event.source)) {
     console.error(`dropping event for unknown source "${event.source}" (type "${event.type}")`);
     return "ack";
   }
-  const response = await handler.handle(event.data, env, ctx);
+  const handler = SOURCES[event.source];
+  const pending: Promise<unknown>[] = [];
+  const trackingCtx: ExecutionContext = {
+    ...ctx,
+    waitUntil(promise: Promise<unknown>) {
+      pending.push(promise);
+      ctx.waitUntil(promise);
+    },
+  };
+  const response = await handler.handle(event.data, env, trackingCtx);
   if (response.status >= 500) return "retry";
   if (response.status >= 400) {
     console.error(`dropping event "${event.type}" for source "${event.source}": handler returned ${response.status}`);
   }
+  const results = await Promise.allSettled(pending);
+  if (results.some((r) => r.status === "rejected" || r.value === false)) return "retry";
   return "ack";
 }
 

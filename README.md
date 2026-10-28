@@ -188,7 +188,7 @@ Each message body must be a structured event envelope (an object or a JSON strin
 `source` selects the same handler as the matching `POST /<source>` route (registered in `src/registry.ts`), and `data` is the payload the HTTP route would have received in its body. Webhook signature `authorize` checks are not re-run for queued messages — only publish to the queue from trusted producers. Batch semantics:
 
 - Handled messages are `ack()`ed individually; `batch.ackAll()` acknowledges the remainder after every message is marked.
-- A handler response of `5xx` (e.g. a failed Poke forward) or a thrown error calls `message.retry()` so the queue redelivers that message (up to `max_retries`).
+- A handler response of `5xx`, a thrown error, or a background `ctx.waitUntil` forward that fails calls `message.retry()` so the queue redelivers that message (up to `max_retries`).
 - Malformed envelopes and `4xx` handler responses (including ignored/unroutable events) are logged and acknowledged — never retried.
 - `src/queue.ts` `QUEUE_DISPATCHERS` maps queue names to custom dispatchers; queues without an entry fall back to `"*"`, which dispatches by `source`.
 

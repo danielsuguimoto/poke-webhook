@@ -150,6 +150,21 @@ test("queue consumer handles mixed batches independently and retries handler exc
   }
 });
 
+test("queue consumer retries when a background Poke forward resolves false", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response("poke down", { status: 503 }));
+  const { messages, pending } = await invoke([LOCATION_EVENT]);
+  await Promise.allSettled(pending);
+  assert.equal(messages[0].state.value, "retry");
+});
+
+test("queue consumer acks events for inherited object property names", async (t) => {
+  t.mock.method(globalThis, "fetch", () => assert.fail("must not forward unroutable messages"));
+  for (const source of ["toString", "hasOwnProperty", "constructor", "valueOf", "__proto__"]) {
+    const { messages } = await invoke([{ source, type: "anything", data: {} }]);
+    assert.equal(messages[0].state.value, "ack", source);
+  }
+});
+
 test("queue consumer routes batches by queue name through the dispatch registry", async (t) => {
   t.mock.method(globalThis, "fetch", async () => Response.json({}));
   const { QUEUE_DISPATCHERS } = require("../.test-build/queue.js");
