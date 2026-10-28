@@ -1,17 +1,7 @@
-import type { DurableObjectNamespace, ExecutionContext } from "@cloudflare/workers-types";
+import type { DurableObjectNamespace, ExecutionContext, MessageBatch } from "@cloudflare/workers-types";
 import { json } from "./utils";
-import { agentmail } from "./sources/agentmail";
-import { anakin } from "./sources/anakin";
-import { circleback } from "./sources/circleback";
-import { composio } from "./sources/composio";
-import { goalApi } from "./sources/goal-api";
-import { locationTracker } from "./sources/location-tracker";
-import { parallel } from "./sources/parallel";
-import { pluggy } from "./sources/pluggy";
-import { ramble } from "./sources/ramble";
-import { resend } from "./sources/resend";
-import { tinyfish } from "./sources/tinyfish";
-import { todoist } from "./sources/todoist";
+import { SOURCES } from "./registry";
+import { handleQueueBatch } from "./queue";
 
 export interface Env {
   POKE_API_KEY: string;
@@ -47,20 +37,9 @@ export interface SourceHandler {
   ): Promise<Response> | Response;
 }
 
-const ROUTES: Record<string, SourceHandler> = {
-  "/agentmail": agentmail,
-  "/anakin": anakin,
-  "/circleback": circleback,
-  "/composio": composio,
-  "/goal-api": goalApi,
-  "/location-tracker": locationTracker,
-  "/parallel": parallel,
-  "/pluggy": pluggy,
-  "/ramble": ramble,
-  "/resend": resend,
-  "/tinyfish": tinyfish,
-  "/todoist": todoist,
-};
+const ROUTES: Record<string, SourceHandler> = Object.fromEntries(
+  Object.entries(SOURCES).map(([name, handler]) => [`/${name}`, handler]),
+);
 
 export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
@@ -89,5 +68,9 @@ export default {
     }
 
     return handler.handle(payload, env, ctx);
+  },
+
+  async queue(batch: MessageBatch<unknown>, env: Env, ctx: ExecutionContext): Promise<void> {
+    return handleQueueBatch(batch, env, ctx);
   },
 };
