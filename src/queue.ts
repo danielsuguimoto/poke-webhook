@@ -1,6 +1,7 @@
 import type { ExecutionContext, MessageBatch } from "@cloudflare/workers-types";
 import type { Env } from "./index";
 import { SOURCES } from "./registry";
+import { isCloudflareEvent } from "./sources/cloudflare";
 
 export interface QueueEvent {
   source: string;
@@ -70,6 +71,9 @@ function parseQueueEvent(body: unknown): QueueEvent | null {
     }
   }
   if (!isRecord(value)) return null;
+  if (isCloudflareEvent(value)) {
+    return { source: "cloudflare", type: value.type, data: value, timestamp: value.metadata.eventTimestamp };
+  }
   if (typeof value.source !== "string" || !value.source) return null;
   if (typeof value.type !== "string" || !value.type) return null;
   if (!isRecord(value.data)) return null;
